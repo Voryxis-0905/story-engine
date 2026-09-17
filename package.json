@@ -4,6 +4,10 @@
   "version": "0.11.3",
   "scripts": {
     "dev": "npm --prefix ui run dev",
-    "build": "npm --prefix ui run build"
+    "build": "npm --prefix ui run build",
+    "lint": "npm --prefix ui run lint",
+    "test": "python backend/run_tests.py",
+    "test:legacy": "python backend/run_tests.py --legacy",
+    "check": "npm run test && npm run test:legacy && npm run build && npm run lint"
   }
 }

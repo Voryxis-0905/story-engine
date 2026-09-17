@@ -42,6 +42,8 @@ Biến môi trường `STORY_ENGINE_DATA_DIR` cho phép chọn thư mục lưu d
 
 ## Thư mục
 
+Xem [bản đồ codebase](docs/CODEBASE.md), [mục lục tài liệu](docs/README.md) và [hướng dẫn đóng góp](CONTRIBUTING.md) để bắt đầu sửa code. Sau khi kích hoạt môi trường Python, chạy `npm run check` để kiểm tra toàn bộ. GitHub Actions chạy kiểm tra backend trên Windows/Linux và build/lint giao diện trên Linux.
+
 - `backend/`: API, engine, luật, bộ nhớ và pipeline AI.
 - `ui/`: giao diện web.
 - `docs/`: thiết kế, đánh giá và lịch sử công việc.
