@@ -1,0 +1,40 @@
+Task 5 Session Notes
+====================
+Date: 2026-07-28
+
+Task: Card `status: "locked"` silently excludes allowed characters from AI context
+
+Files modified:
+  1. backend/app/engine.py:1332-1338
+     - Function: advance_checkpoint_if_ready()
+     - Change: Added `or card.get("unlock_checkpoint_id") == next_cp_id` check
+     - Effect: When advancing to a checkpoint, cards whose unlock_checkpoint_id
+       matches that checkpoint are auto-unlocked, even if not explicitly listed
+       in the checkpoint's `cards_unlocked` array.
+
+  2. backend/app/routes/creator_routes.py:95-98
+     - Function: force_advance_checkpoint()
+     - Change: Same `or card.get("unlock_checkpoint_id") == cp["checkpoint_id"]`
+       check added to the force-advance unlock path.
+     - Effect: Same behavior for forced checkpoint transitions via creator UI.
+
+Root cause:
+  - The unlock mechanism only checked `card["id"] in next_checkpoint["cards_unlocked"]`.
+  - The card's `unlock_checkpoint_id` field was only ever read at creation time
+    (in builder_routes.py:227) to set initial status ("unlocked" iff cp_0).
+  - At runtime, even if a card had unlock_checkpoint_id matching the checkpoint
+    being entered, it was never unlocked unless the LLM also put it in
+    cards_unlocked.
+  - get_active_cards() then silently filtered it out, degrading AI writing quality
+    for characters narratively allowed (in allowed_characters) but locked.
+
+Notable:
+  - Kaito_Reeves in echo_terminal world was the concrete example: unlock_checkpoint_id
+    = "cp_2", status = "locked", cp_2's allowed_characters included Kaito_Reeves but
+    cards_unlocked did not → Kaito_Reeves card content was never fed to writer AI.
+  - The cards_unlocked field on checkpoints and unlock_checkpoint_id on cards are
+    duplicative mechanisms. A future cleanup could deprecate cards_unlocked and
+    rely solely on card-level unlock_checkpoint_id.
+  - The `status != "unlocked"` guard prevents double-counting in unlocked_card_names
+    when a card matches both conditions.
+  - All existing tests in test_engine.py pass after the change.

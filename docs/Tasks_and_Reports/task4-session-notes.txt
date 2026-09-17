@@ -1,0 +1,66 @@
+# Phase 4 Session Notes — Frontend React TypeScript Migration & UI Separation
+## Date: 2026-07-30
+
+## Task 4.1: Initialize Vite + React + TypeScript Frontend Project & API Client
+- Created Vite + React 19 + TypeScript project at `story-engine/ui/`
+- Installed dependencies: `@xyflow/react`, `react-router-dom`
+- Created `src/api/types.ts`: Full TypeScript type definitions mirroring all backend Pydantic models:
+  - Character, Card, Checkpoint, CheckpointBoundary, SubBeat
+  - LocationNode, LocationMap (for map system)
+  - PowerStat, StyleCard, StateChanges, CharacterStateChange
+  - PlayState, WorldConfig, TraitDefinition, ForeshadowingItem, SaveEntry
+  - RuntimeConfig, WorldCanonFact, WorldGraph, ApiError
+- Created `src/api/client.ts`: Generic API fetch wrapper with:
+  - Configurable base URL (persisted to localStorage)
+  - Custom `ApiRequestError` class with status/retryAfter
+  - Full typed API client object with all endpoints (health, worlds, chapter, builder, creator, studio)
+- Created `src/api/index.ts` barrel export
+
+## Task 4.2: Build Separated UI Components & Codex Affinity Graph
+- **State Management**: `src/context/WorldContext.tsx` — useReducer-based context with actions:
+  - SELECT_WORLD, SET_PLAY_STATE, APPEND_CHAPTER, SET_CHARACTERS
+  - SET_CHECKPOINTS, SET_CARDS, SET_STYLE_CARD, SET_LOCATION_MAP, RESET
+  - Custom hook `useWorld()` for consuming components
+- **Layout Components**:
+  - `Sidebar.tsx`: Backend URL input, health indicator, world creation form, seed demo button, collapsible
+  - `MainPanel.tsx`: World header (display name, genre, chapter count), placeholder/error states
+  - `WorldSelector.tsx`: Dropdown with world list, delete, active state highlighting
+- **Story Components**:
+  - `PlayView.tsx`: Mode tabs (Story/Codex/Map), segment control (Story/Status/Debug)
+  - `ChapterFeed.tsx`: Scrollable feed of polaroid-style chapter cards, loading spinner, suggested actions chips, summary toggle
+  - `InputBar.tsx`: Multi-line textarea, send on Enter, regenerate button, disabled state
+- **Status Components**:
+  - `PlayStatusSidebar.tsx`: Character info card (name, location, age, realm/exp, traits), story progress, karma display, status effects
+  - `InventoryGrid.tsx`: CSS grid layout for inventory items with hover effect
+  - `SkillsPanel.tsx`: Gradient-styled skill list
+- **Codex**:
+  - `CodexView.tsx`: Two-panel layout (card list + affinity graph), locked/unlocked cards, export story button
+  - `AffinityGraph.tsx`: React Flow with:
+    - Character nodes distributed in circle layout with gradient styling
+    - Relationship edges with arrow markers (solid for defined, dashed for undefined)
+    - Edge labels showing relationship description
+    - Background grid, Controls, MiniMap
+    - `buildRelationshipMap()` utility to extract relationships from characters
+- **Common**:
+  - `Toast.tsx`: ToastProvider + useToast hook, animate in, error/celebrate variants
+  - `Modal.tsx`: Backdrop with Escape key handling, header/body/footer slots
+- **Styles**: `src/styles/global.css` — full "Starlight Scrapbook" theme (periwinkle/sakura/gold palette, rounded everything, custom scrollbar)
+
+## Task 4.3: Interactive Location Map Tab Component
+- `LocationMap.tsx`: Full SVG-based interactive map with:
+  - Normalized coordinates (0-100), auto-scaled to container dimensions
+  - Dark gradient background with grid pattern
+  - Connection lines between locations (styled solid for unlocked, dashed for locked)
+  - Node circles with color coding (gold = starting, periwinkle = unlocked, dim = locked)
+  - Fog of War: locked nodes render with fog filter overlay + 🔒 icon + "???" name
+  - Character location indicators (small pink dots grouped under node)
+  - Tooltip on hover showing name, description, unlock requirements
+  - Lock condition evaluation (EXP check, realm check, starting location always unlocked)
+  - SVG glow filter for starting node
+  - Legend overlay (Unlocked/Locked/Start)
+- `MapTab.tsx`: Wrapper with header showing protagonist realm/EXP, loads map data, empty state for worlds without maps
+
+## Build Result
+- `npm run build` succeeds
+- Output: dist/index.html (0.84 KB), CSS (19.92 KB), JS (410 KB, gzipped ~128 KB including React Flow)
+- All TypeScript strict checks pass

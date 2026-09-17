@@ -1,0 +1,44 @@
+Task 2 Session Notes
+====================
+Date: 2026-07-28
+
+Task: pacing_level, pov_angle, prelude_enabled never written into generated worlds
+
+Files read:
+  - story-engine-workorder.md (full workorder)
+  - backend/prompts.py (WORLD_BUILDER_SKELETON_PROMPT lines 87-138)
+  - backend/app/engine.py (TEMPLATES["world_config.json"] lines 53-79)
+  - backend/app/models.py (WorldConfigUpdate lines 32-34 for valid values)
+  - backend/app/routes/builder_routes.py (world_builder_step skeleton logic lines 134-178, world_builder_interview_respond lines 72-84)
+
+Root cause:
+  WORLD_BUILDER_SKELETON_PROMPT's JSON output schema never asked the LLM to output
+  pacing_level, pov_angle, or prelude_enabled in world_config. Meanwhile,
+  TEMPLATES["world_config.json"] in engine.py hardcodes defaults:
+    - "pacing_level": "Balanced"
+    - "pov_angle": "3rd_person_limited"
+    - "prelude_enabled": False
+  The merge in builder_routes.py line 144 (new_cfg = {**TEMPLATES, **cfg, **res_cfg})
+  means TEMPLATES defaults always won since res_cfg never contained these fields.
+
+Change made:
+  backend/prompts.py:
+    - Added Rule 7 to WORLD_BUILDER_SKELETON_PROMPT instructing the model to infer
+      pacing_level, pov_angle, prelude_enabled from the user's interview answers
+      (provided as "Q&A Clarifications" in the prompt payload). Valid values per
+      models.py are listed explicitly.
+    - Added all three fields to the EXACT JSON STRUCTURE TO RETURN block inside
+      world_config with placeholder values showing valid format.
+
+Verification:
+  - Code path traced: interview answers flow through builder_routes.py
+    world_builder_interview_respond -> stored as narrative_scope_note ->
+    sent to LLM in skeleton step -> LLM now outputs the fields in res_cfg ->
+    merge {**TEMPLATES, **cfg, **res_cfg} correctly uses LLM values.
+  - Ran "python -m pytest test_engine.py -x -q" -> all tests pass (0 failures).
+
+Notable:
+  - The interview prompt (WORLD_BUILDER_INTERVIEW_PROMPT, lines 48-65) already
+    asks questions about Pacing, POV, and Prelude preferences - so the data
+    to infer from was already being collected, just not used.
+  - The seed-demo world bypasses this entirely (hardcoded data), so no regression risk.

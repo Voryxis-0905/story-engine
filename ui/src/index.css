@@ -1,0 +1,211 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+@import './styles/index.css';
+
+@theme {
+  --font-display: "Plus Jakarta Sans", sans-serif;
+  --font-sans: "Plus Jakarta Sans", sans-serif;
+  
+  --animate-fade-in: fade-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-slide-up: slide-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-slide-in-right: slide-in-right 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+:root {
+  /* Cute Soft Pastel Premium Theme (Sakura & Periwinkle Palette) */
+  --bg-main: #FFF8F2; /* Cream background */
+  --bg-surface: #FFFDFB;
+  --bg-subtle: #EFEBFC; /* Lavender subtle background */
+
+  /* Theme Tokens */
+  --cream: #FFF8F2;
+  --cream-2: #FFFDFB;
+  --lavender: #EFEBFC;
+  --lavender-2: #E3DDFA;
+  
+  /* Accents */
+  --periwinkle: #8B90E8;
+  --periwinkle-rgb: 139, 144, 232;
+  --periwinkle-dark: #6A6FD6;
+
+  --sakura: #F6A8C6;
+  --sakura-rgb: 246, 168, 198;
+  --sakura-dark: #E285A8;
+
+  --gold: #F7C948;
+  --gold-rgb: 247, 201, 72;
+  --gold-dark: #D4A322;
+
+  --accent-sage: #8B90E8; /* Remapped sage references to Periwinkle for consistency */
+  --accent-peach: #F6A8C6; /* Remapped peach references to Sakura Pink */
+  --accent-lavender: #EFEBFC;
+  --accent-main: var(--periwinkle);
+
+  /* Typography */
+  --ink: #453D63;
+  --ink-main: #453D63; /* Deep soft purple ink */
+  --ink-soft: #837AA3; /* Soft purple slate */
+  --ink-faint: #ACA4C6;
+  
+  /* Status */
+  --danger: #EF6E8B;
+  --danger-rgb: 239, 110, 139;
+  --warn: #EFA23F;
+  --ok: #4FBE93;
+  
+  /* Lines & Borders */
+  --line: #E6E0FA;
+  --line-2: #D8CFF6;
+
+  /* Shadows (Tinted & Soft) */
+  --shadow-sm: 0 4px 20px rgba(139, 144, 232, 0.12), 0 1px 3px rgba(69, 61, 99, 0.04);
+  --shadow-md: 0 10px 40px rgba(139, 144, 232, 0.18), 0 4px 12px rgba(69, 61, 99, 0.06);
+  --shadow-lg: 0 20px 60px rgba(139, 144, 232, 0.24), 0 8px 24px rgba(69, 61, 99, 0.08);
+  --shadow-pop: 0 4px 0 rgba(106, 111, 214, 0.55);
+  
+  /* Typography */
+  --font-display: 'Plus Jakarta Sans', sans-serif;
+  --font-body: 'Plus Jakarta Sans', sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--bg-main);
+    color: var(--ink-main);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Refined Modern Buttons */
+  .pill-btn {
+    border-radius: 1rem;
+    font-weight: 700;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.875rem 2.25rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    min-height: 48px;
+    cursor: pointer;
+  }
+
+  .pill-btn:active {
+    transform: scale(0.98);
+  }
+
+  .pill-btn-primary {
+    background: linear-gradient(135deg, var(--periwinkle-dark), #565bc8);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 6px 20px -2px rgba(139, 144, 232, 0.4), 0 2px 4px rgba(69, 61, 99, 0.08);
+  }
+
+  .pill-btn-primary:hover {
+    background: linear-gradient(135deg, #5b60d4, #4a4eb8);
+    box-shadow: 0 10px 28px -2px rgba(139, 144, 232, 0.55), 0 4px 8px rgba(69, 61, 99, 0.12);
+    transform: translateY(-2px);
+  }
+
+  .pill-btn-secondary {
+    background: var(--bg-surface);
+    color: var(--ink-main);
+    border: 1.5px solid var(--line-2);
+    box-shadow: 0 2px 8px rgba(69, 61, 99, 0.04);
+  }
+
+  .pill-btn-secondary:hover {
+    background: var(--bg-subtle);
+    border-color: var(--periwinkle);
+    color: var(--periwinkle-dark);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(139, 144, 232, 0.15);
+  }
+
+  .story-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--line);
+    border-radius: 1.25rem;
+    padding: 1.5rem;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .story-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--line-2);
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 999px;
+  border: 2px solid var(--bg-main);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-faint);
+}
+
+/* Staggered utilities */
+.stagger-1 { animation-delay: 100ms; }
+.stagger-2 { animation-delay: 200ms; }
+.stagger-3 { animation-delay: 300ms; }
+.stagger-4 { animation-delay: 400ms; }
+.stagger-5 { animation-delay: 500ms; }
+
+/* Optional extremely subtle grain, so subtle it just breaks digital flatness */
+.bg-noise {
+  position: relative;
+}
+.bg-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.02'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 50;
+  opacity: 0.6;
+  mix-blend-mode: multiply;
+}

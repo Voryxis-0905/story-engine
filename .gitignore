@@ -1,0 +1,29 @@
+# Local credentials, runtime configuration and personal stories
+.env
+.env.*
+!.env.example
+data/
+.agents/
+
+# Installed dependencies and generated files
+.venv/
+venv/
+node_modules/
+dist/
+dist-ssr/
+__pycache__/
+*.py[cod]
+*.tsbuildinfo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+logs/
+
+# Machine-specific files
+desktop.ini
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+*.local

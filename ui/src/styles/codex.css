@@ -1,0 +1,55 @@
+.codex-mode {
+  display: flex;
+  gap: 24px;
+  padding: 20px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.codex-cards {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.codex-cards h3 {
+  font-family: var(--font-display);
+  margin: 0 0 8px 0;
+  font-size: 16px;
+}
+
+.codex-card {
+  background: var(--cream-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+}
+.codex-card-name {
+  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: 14px;
+}
+.codex-card-type {
+  font-size: 11px;
+  color: var(--ink-soft);
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.codex-card-content {
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+.codex-graph {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.codex-graph h3 {
+  font-family: var(--font-display);
+  margin: 0 0 8px 0;
+  font-size: 16px;
+}

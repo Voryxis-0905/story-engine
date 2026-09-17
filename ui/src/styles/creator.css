@@ -1,0 +1,11 @@
+.creator-mode {
+  padding: 24px 30px;
+  height: 100%;
+  overflow-y: auto;
+}
+.creator-mode .placeholder {
+  color: var(--ink-soft);
+  font-weight: 600;
+  text-align: center;
+  padding: 60px 0;
+}

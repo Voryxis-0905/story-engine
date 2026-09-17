@@ -1,0 +1,9 @@
+{
+  "name": "story-engine",
+  "private": true,
+  "version": "0.11.3",
+  "scripts": {
+    "dev": "npm --prefix ui run dev",
+    "build": "npm --prefix ui run build"
+  }
+}

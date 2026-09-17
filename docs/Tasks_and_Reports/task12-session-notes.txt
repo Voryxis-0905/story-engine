@@ -1,0 +1,53 @@
+Task 12 — Writer prompt forces short output regardless of intended chapter length
+================================================================================
+
+Files modified:
+  - backend/app/engine.py   (add get_words_per_turn_target, inject into payload)
+  - backend/prompts.py      (rewrite WRITER_SYSTEM_PROMPT rule 8)
+  - backend/main.py         (export get_words_per_turn_target for tests)
+  - backend/test_engine.py  (10 new assertions: 12a, 12b, 12c)
+
+What was wrong:
+  Rule 8 of WRITER_SYSTEM_PROMPT said:
+    "This single call is one 'turn' — a short, focused beat, not a whole chapter."
+  This unconditionally trained the model toward short output on every call,
+  regardless of pacing_level, chapter-length targets, or how many turns remain
+  before the chapter-close thresholds.
+
+What changed:
+
+  1. engine.py:158-165 — new function get_words_per_turn_target(pacing_level):
+       Slowburn -> 300, Balanced -> 200, Fast -> 130
+       (designed to be extended later with output_length from Task 13)
+
+  2. engine.py:2316 — "words_per_turn_target" injected into base_payload
+       so it reaches the writer agent in every turn.
+
+  3. prompts.py:263 — rule 8 rewritten to say:
+       "Write enough prose to meaningfully advance this beat — target roughly
+       `words_per_turn_target` words for this turn (provided in the payload,
+       derived from the world's pacing/length settings), not an arbitrarily
+       short snippet. Do not pad or ramble to hit the target, but do not
+       artificially truncate a scene that needs more room."
+     The chapter_end decision logic (when to close a chapter) is preserved
+     unchanged from the original.
+
+  4. main.py:73 — added get_words_per_turn_target to the from-app.engine import.
+
+  5. test_engine.py — 10 new assertions verified:
+       - 12a: pure function returns correct targets per pacing level
+       - 12b: writer payload actually carries words_per_turn_target,
+              values differ between Slowburn (300) and Fast (130)
+       - 12c: WRITER_SYSTEM_PROMPT no longer contains "short, focused beat"
+              and references words_per_turn_target
+
+Test results: ALL 3839 lines pass (including 10 new Task 12 checks).
+
+Notable for future tasks:
+  - get_words_per_turn_target currently keys only on pacing_level.
+    Task 13 (output_length setting) should merge pacing_level + output_length
+    into a single combined lookup rather than layering two independent systems.
+  - call_narrator_and_parse (engine.py:2098) receives payload from its caller
+    and passes it through to call_writer_stage — any caller is responsible for
+    including words_per_turn_target in the payload they pass. Currently unused
+    (only _generate_chapter is the live path).
