@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 import json
 import os
 import shutil
+from app.persistence import commit_world_files, locked_world
 
 from app.storage import (
     require_world, world_path_of, read_world_file, write_world_file,
@@ -116,6 +117,7 @@ def force_advance_checkpoint(world_name: str, req: ForceAdvanceRequest):
 
 
 @router.post("/worlds/{world_name}/saves")
+@locked_world
 def create_save(world_name: str, req: CreateSaveRequest):
     world_path = require_world(world_name)
     save_id = new_save_id()
@@ -134,6 +136,7 @@ def list_saves(world_name: str):
 
 
 @router.post("/worlds/{world_name}/saves/{save_id}/restore")
+@locked_world
 def restore_save(world_name: str, save_id: str):
     world_path = require_world(world_name)
     saves = read_saves_index(world_path)
@@ -150,12 +153,17 @@ def restore_save(world_name: str, save_id: str):
     saves.append(safety_entry)
 
     src_dir = os.path.join(world_path, "saves", save_id)
-    for filename in TEMPLATES.keys():
+    updates = {}
+    for filename, template in TEMPLATES.items():
         src = os.path.join(src_dir, filename)
         if os.path.exists(src):
-            shutil.copy2(src, os.path.join(world_path, filename))
+            updates[filename] = read_world_file(src_dir, filename)
+        else:
+            # A legacy save must not inherit events/map/canon from its future.
+            updates[filename] = template
 
-    write_saves_index(world_path, saves)
+    updates["saves_index.json"] = {"saves": saves}
+    commit_world_files(world_path, updates)
     return {
         "message": "Restored world to the selected save point",
         "restored_save_id": save_id,
@@ -178,6 +186,7 @@ def delete_save(world_name: str, save_id: str):
 
 
 @router.post("/worlds/{world_name}/saves/{save_id}/branch")
+@locked_world
 def branch_from_save(world_name: str, save_id: str, req: BranchRequest):
     world_path = require_world(world_name)
     saves = read_saves_index(world_path)
@@ -185,6 +194,7 @@ def branch_from_save(world_name: str, save_id: str, req: BranchRequest):
         raise HTTPException(status_code=404, detail=f"Could not find save '{save_id}'")
 
     new_name = req.new_world_name.strip()
+    _validate_world_name(new_name)
     if not new_name:
         raise HTTPException(status_code=400, detail="Must enter a new world name to branch")
     new_world_path = world_path_of(new_name)

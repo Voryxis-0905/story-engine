@@ -1,5 +1,7 @@
 # Story Engine — chạy trên máy này
 
+**Cập nhật 18/09/2026:** đã hoàn thành đợt sửa độ tin cậy đầu tiên; 14 test mới và 747 kiểm tra cũ đạt. Chi tiết trong `docs/Tasks_and_Reports/reliability-pass-1.md`. Các mục kiểm tra bên dưới là kết quả lịch sử của lần cài đặt 17/09.
+
 Đã chuẩn bị ngày 17/09/2026 từ bản ZIP người dùng cung cấp.
 
 - Mở `Start-StoryEngine.cmd`, giữ cửa sổ đó mở, truy cập http://localhost:5173.

@@ -16,9 +16,7 @@ def load_world_events(world_path: str) -> dict:
         with open(f"{world_path}/world_events.json", "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        return dict(WORLD_EVENTS_TEMPLATE)
-    except json.JSONDecodeError:
-        return dict(WORLD_EVENTS_TEMPLATE)
+        return {"events": []}
 
 
 def save_world_events(world_path: str, data: dict) -> None:
@@ -69,7 +67,7 @@ def apply_location_effects(location_map: dict, effects: List[dict]) -> None:
 
 
 def append_facts_to_canon(world_canon_store: dict, facts: List[str], source: str) -> None:
-    if not facts or not world_canon_store:
+    if not facts or not isinstance(world_canon_store, dict):
         return
     existing = world_canon_store.get("facts", [])
     for statement in facts:

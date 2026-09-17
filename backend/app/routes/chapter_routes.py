@@ -17,6 +17,7 @@ from app.models import (
     ChapterContinueRequest, ChapterStartRequest, LintChapterRequest,
     RewriteChapterRequest
 )
+from app.persistence import commit_world_files, locked_world
 
 try:
     from prompts import LINTER_SYSTEM_PROMPT as _LSP
@@ -423,9 +424,10 @@ def get_endgame_status(world_name: str):
 
 
 @router.post("/worlds/{world_name}/chapter/generate-epilogue-choices")
+@locked_world
 def generate_epilogue_choices(world_name: str):
     from app.engine import call_llm, parse_llm_json
-    from app.prompts import EPILOGUE_CHOICES_PROMPT
+    from prompts import EPILOGUE_CHOICES_PROMPT
     from app.storage import read_world_file, require_world, write_world_file
     import json
 
@@ -471,20 +473,29 @@ def generate_epilogue_choices(world_name: str):
 
 
 @router.post("/worlds/{world_name}/chapter/generate-epilogue")
+@locked_world
 def generate_epilogue(world_name: str, req: dict):
     from app.engine import call_llm, parse_llm_json
-    from app.prompts import EPILOGUE_GENERATOR_PROMPT
+    from prompts import EPILOGUE_GENERATOR_PROMPT
     from app.storage import read_world_file, require_world, write_world_file
     import json
 
     world_path = require_world(world_name)
     world_config = read_world_file(world_path, "world_config.json")
+    chapters_data = read_world_file(world_path, "chapters.json")
+    if world_config.get("lifecycle_status") == "completed":
+        saved = chapters_data.get("epilogue")
+        if isinstance(saved, dict) and saved.get("text"):
+            return {"epilogue": saved["text"], "lifecycle_status": "completed"}
+        raise HTTPException(status_code=409, detail="This story is already completed")
+    if world_config.get("story_mode") != "fixed_ending" or world_config.get("lifecycle_status") != "endgame_pending":
+        raise HTTPException(status_code=409, detail="Endgame is not ready")
     target = world_config.get("target_ending_scenario")
     if not target:
         raise HTTPException(status_code=400, detail="No target ending scenario")
 
     chosen_choice = req.get("chosen_choice", "")
-    if not chosen_choice:
+    if not isinstance(chosen_choice, str) or not chosen_choice.strip():
         raise HTTPException(status_code=400, detail="Missing chosen_choice")
 
     character_state = read_world_file(world_path, "character_state.json")
@@ -511,12 +522,30 @@ def generate_epilogue(world_name: str, req: dict):
             world_name=world_name
         )
         parsed = parse_llm_json(raw)
-        epilogue = parsed.get("epilogue", "The story comes to a close...")
+        epilogue = parsed.get("epilogue") if isinstance(parsed, dict) else None
+        if not isinstance(epilogue, str) or not epilogue.strip():
+            raise HTTPException(status_code=502, detail="The model returned no epilogue; the story remains open")
 
-        # Mark world as completed
+        chapters_data["epilogue"] = {"text": epilogue, "chosen_choice": chosen_choice}
+        last_index = max((c.get("chapter_index", 0) for c in chapters_data["chapters"]), default=0)
+        chapters_data["chapters"].append({
+            "chapter_index": last_index + 1,
+            "turn_index": 1,
+            "chapter_closed": True,
+            "chapter_title": "Epilogue",
+            "checkpoint_id": world_config.get("current_checkpoint_id", ""),
+            "user_input": chosen_choice,
+            "chapter_text": epilogue,
+            "kind": "epilogue",
+        })
         world_config["lifecycle_status"] = "completed"
-        write_world_file(world_path, "world_config.json", world_config)
+        commit_world_files(world_path, {
+            "chapters.json": chapters_data,
+            "world_config.json": world_config,
+        })
 
         return {"epilogue": epilogue, "lifecycle_status": "completed"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

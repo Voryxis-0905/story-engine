@@ -31,6 +31,7 @@ from app.checkpoint_engine import (
 )
 from app.language_detection import detect_story_language
 from app.models import StateChangesModel
+from app.persistence import commit_world_files, locked_world
 from app.psychology import (
     generate_perceptions_for_all_characters,
     update_psychologies_for_all_characters,
@@ -1067,6 +1068,7 @@ def normalize_character_dict(raw_chars: dict) -> dict:
     return validated_chars
 
 
+@locked_world
 def _generate_chapter(world_name: str, narrator_input: str, display_input: str = None) -> dict:
     from app.storage import (
         world_path_of, read_world_file, write_world_file,
@@ -1088,6 +1090,9 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     chapters_data = read_world_file(world_path, "chapters.json")
     world_canon_store = read_world_canon(world_path)
     branch_delta = read_branch_delta(world_path)
+
+    if world_config.get("lifecycle_status") == "completed":
+        raise HTTPException(status_code=409, detail="This story is completed. Restore a save or create a branch to continue.")
 
     location_map = None
     try:
@@ -1143,6 +1148,10 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     story_clock = world_config.get("story_clock")
     if not isinstance(story_clock, dict):
         story_clock = dict(DEFAULT_STORY_CLOCK)
+    try:
+        turn_start_tick = max(0, int(story_clock.get("tick", 0)))
+    except (TypeError, ValueError):
+        turn_start_tick = 0
 
     foreshadowing_tracker = world_config.get("foreshadowing_tracker")
     if foreshadowing_tracker is None:
@@ -1380,23 +1389,6 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     world_config["story_clock"] = story_clock
     world_config["foreshadowing_tracker"] = foreshadowing_tracker
 
-    # Tick world events (Living World Thread)
-    try:
-        from app.world_events import tick_world_events, load_world_events, save_world_events
-        world_events = load_world_events(world_path)
-        resolved = tick_world_events(
-            world_events,
-            world_config,
-            character_state["characters"],
-            world_canon_store,
-            location_map
-        )
-        if resolved:
-            save_world_events(world_path, world_events)
-            logger.info("World events resolved: %s", resolved)
-    except Exception as e:
-        logger.warning("World events tick failed: %s", e)
-
     open_threads = world_config.get("open_threads", [])
     if not isinstance(open_threads, list):
         open_threads = []
@@ -1512,15 +1504,21 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         chapter_closed=this_chapter_closed
     )
 
-    # Tick endgame after checkpoint advancement
+    # Resolve against the final turn clock, then commit consequences with the turn.
+    # The engine owns logical turns; model-generated calendar time is independent.
+    story_clock["tick"] = turn_start_tick + 1
+    from app.world_events import tick_world_events, load_world_events
+    world_events = load_world_events(world_path)
+    resolved = tick_world_events(
+        world_events, world_config, character_state["characters"],
+        world_canon_store, location_map
+    )
+
+    # Tick endgame after checkpoint advancement and world events.
     endgame_result = tick_endgame(world_config, character_state["characters"])
     if endgame_result.get("status_changed"):
-        # Write the updated world_config so endgame status is persisted
-        write_world_file(world_path, "world_config.json", world_config)
-        # If lifecycle_status is still active and endgame is ready, update it
-        if world_config.get("lifecycle_status") == "active" and endgame_result.get("new_status") == "ready":
+        if world_config.get("lifecycle_status", "active") == "active" and endgame_result.get("new_status") == "ready":
             world_config["lifecycle_status"] = "endgame_pending"
-            write_world_file(world_path, "world_config.json", world_config)
 
     if draft_entities:
         for draft in draft_entities:
@@ -1550,11 +1548,18 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
 
     check_rolling_summary_trigger(chapters_data, world_name=world_name, world_config=world_config)
 
-    write_world_file(world_path, "character_state.json", character_state)
-    write_world_file(world_path, "chapters.json", chapters_data)
-    write_world_file(world_path, "world_config.json", world_config)
+    updates = {
+        "character_state.json": character_state,
+        "chapters.json": chapters_data,
+        "world_config.json": world_config,
+    }
     if checkpoint_advanced or draft_entities:
-        write_world_file(world_path, "card_registry.json", card_registry)
+        updates["card_registry.json"] = card_registry
+    if resolved:
+        updates["world_events.json"] = world_events
+        updates["world_canon_store.json"] = world_canon_store
+        if location_map is not None:
+            updates["location_map.json"] = location_map
 
     extractor_cross_check = None
     if _get_effective_extractor_cross_check(world_name):
@@ -1562,6 +1567,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         extractor_cross_check = run_extractor_cross_check(
             world_name, chapter_text, existing_facts, world_config
         )
+
+    commit_world_files(world_path, updates)
 
     return {
         "chapter": chapter_record,
