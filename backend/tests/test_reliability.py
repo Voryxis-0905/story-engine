@@ -2110,7 +2110,7 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(evidence[0]['evidence']['sources'], ['backstory'])
 
     def test_item_policies_protect_causal_items_and_require_capability(self):
-        from app.story.inventory import resolve_inventory_action, apply_item_state_effects
+        from app.story.inventory import resolve_inventory_action, apply_item_state_effects, apply_inventory_resolution, normalize_item
         artifact = {'instance_id': 'world-key-1', 'name': 'World Key', 'item_kind': 'causal_artifact', 'drop_policy': 'bound',
                     'requirements': ['ritual literacy']}
         self.assertEqual(resolve_inventory_action('Drop World Key', [artifact], {})['reason'],
@@ -2127,6 +2127,13 @@ class ReliabilityTests(unittest.TestCase):
         applied = apply_item_state_effects(character, resolution, at_tick=4)
         self.assertEqual([e['name'] for e in applied], ['Marked by the Key'])
         self.assertNotIn('power_stat', character)
+        tea = {'instance_id': 'tea', 'name': 'Tea', 'quantity': 2, 'stackable': True,
+               'item_kind': 'consumable', 'usage': {'mode': 'quantity', 'remaining': 2}}
+        tea_resolution = resolve_inventory_action('Use Tea', [tea], {})
+        inventory = [tea]
+        apply_inventory_resolution(inventory, tea_resolution)
+        self.assertEqual(normalize_item(inventory[0])['quantity'], 1)
+        self.assertEqual(normalize_item(inventory[0])['usage']['remaining'], 1)
 
 
 if __name__ == '__main__':

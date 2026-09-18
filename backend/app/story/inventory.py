@@ -79,6 +79,14 @@ def normalize_item(item: Any, *, owner_id: str = "") -> dict:
             usage = {"mode": "quantity", "remaining": quantity}
         else:
             usage = {"mode": "unlimited"}
+    else:
+        usage = dict(usage)
+    # Quantity and legacy charges are engine-owned counters. Keep the display
+    # metadata synchronized even when an older item stored a stale `remaining`.
+    if usage.get("mode") == "quantity":
+        usage["remaining"] = quantity
+    elif usage.get("mode") == "charges" and isinstance(charges, (int, float)):
+        usage["remaining"] = max(0, int(charges))
     return {
         "instance_id": str(item.get("instance_id") or f"inv_{digest}"),
         "item_id": item.get("item_id"), "name": name,
@@ -249,6 +257,10 @@ def apply_inventory_resolution(inventory: list, resolution: Any) -> None:
             item["usage"]["remaining"] = max(0, int(item["usage"].get("remaining", 0)) - 1)
         elif usage.get("mode") == "quantity":
             remove_inventory_item(inventory, {"instance_id": item.get("instance_id"), "quantity": 1})
+            remaining = find_inventory_item(inventory, {"instance_id": item.get("instance_id")})
+            if isinstance(remaining, dict):
+                remaining.setdefault("usage", usage)
+                remaining["usage"]["remaining"] = max(0, int(remaining.get("quantity", 1)))
 
 
 def apply_item_state_effects(character: dict, resolution: Any, *, at_tick: int) -> list:
