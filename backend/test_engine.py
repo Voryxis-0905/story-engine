@@ -15,6 +15,9 @@ from fastapi.testclient import TestClient
 from fastapi import HTTPException
 import main
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'tests'))
+from legacy_fixture import write_progression_fixture
+
 client = TestClient(main.app)
 WORLD = "test_engine_world"
 
@@ -2640,9 +2643,7 @@ if os.path.isdir(wp_a2):
     shutil.rmtree(wp_a2)
 os.makedirs(wp_a2)
 
-DATA_SRC = os.path.join(main.BASE_DIR, "data", "worlds", "cyber_necro_detective")
-for _a2_file in ("canon_timeline.json", "character_state.json", "world_config.json", "card_registry.json"):
-    shutil.copy2(os.path.join(DATA_SRC, _a2_file), wp_a2)
+write_progression_fixture(wp_a2)
 
 # Set world to cp_0 with empty completed_checkpoints and sub_beats_progress
 _a2_wc = main.read_world_file(wp_a2, "world_config.json")
@@ -2760,9 +2761,7 @@ if os.path.isdir(wp_e1):
     shutil.rmtree(wp_e1)
 os.makedirs(wp_e1)
 
-DATA_SRC_E1 = os.path.join(main.BASE_DIR, "data", "worlds", "cyber_necro_detective")
-for _e1_file in ("canon_timeline.json", "character_state.json", "world_config.json", "card_registry.json"):
-    shutil.copy2(os.path.join(DATA_SRC_E1, _e1_file), wp_e1)
+write_progression_fixture(wp_e1)
 
 _e1_wc = main.read_world_file(wp_e1, "world_config.json")
 _e1_wc["current_checkpoint_id"] = "cp_3b_combat"
@@ -3119,9 +3118,7 @@ if os.path.isdir(wp_j5):
     shutil.rmtree(wp_j5)
 os.makedirs(wp_j5)
 
-DATA_SRC_J5 = os.path.join(main.BASE_DIR, "data", "worlds", "cyber_necro_detective")
-for _j5_file in ("canon_timeline.json", "character_state.json", "world_config.json", "card_registry.json"):
-    shutil.copy2(os.path.join(DATA_SRC_J5, _j5_file), wp_j5)
+write_progression_fixture(wp_j5)
 
 _j5_wc = main.read_world_file(wp_j5, "world_config.json")
 _j5_wc["current_checkpoint_id"] = "cp_0"

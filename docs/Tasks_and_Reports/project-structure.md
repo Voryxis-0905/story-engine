@@ -16,6 +16,7 @@
 - So sánh OpenAPI trước/sau: 55 đường dẫn và toàn bộ schema không đổi.
 - So sánh SHA-256 của 21 chuỗi prompt trước/sau: không đổi.
 - Kiểm tra khoảng trắng bằng Git không báo lỗi.
+- Lần CI đầu phát hiện ba nhóm test cũ đọc world trong `data/` không được đưa vào Git. Đã thay bằng `backend/tests/legacy_fixture.py`, tự tạo dữ liệu tối thiểu từ điều kiện của kịch bản kiểm tra; 747 kiểm tra tiếp tục đạt mà không cần world cá nhân.
 
 API, định dạng lưu và hành vi truyện không được chủ động thay đổi trong đợt này. Test dùng AI giả lập. CI được bổ sung nhưng kết quả chạy trên GitHub cần xem tại PR.
 
