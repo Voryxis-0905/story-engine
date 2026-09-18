@@ -176,7 +176,7 @@ MANDATORY RULES:
 3. Every character in "characters" must start power_stat.realm at the lowest tier of the power_system (unless the user explicitly asked for that).
 4. Keys in "characters" must match the character IDs used in the Cards and Checkpoints.
 5. Write "name" and any free-text field in the same language as the world's skeleton (world_config.display_name, genre, tone in the provided payload). If that language can't be determined, default to English.
-6. For every character, also generate the 6 SillyTavern-style rich definition fields: appearance (visual description), personality (behavioral traits and psychology), backstory (origin and key life events), abilities_and_limits (capabilities and weaknesses), speech_style (tone, vocabulary, and 1-2 dialogue examples), and secrets (hidden information and agendas). These fields must be non-empty strings.
+6. For every character, also generate the 6 SillyTavern-style rich definition fields: appearance (visual description), personality (behavioral traits and psychology), backstory (origin and key life events), abilities_and_limits (capabilities and weaknesses), speech_style (tone, vocabulary, and 1-2 dialogue examples), and secrets (hidden information and agendas). These fields must be non-empty strings. Also generate `capabilities` as qualitative evidence records derived from identity, training, backstory, titles, and known skills. Each record has capability_id, statement, proficiency, sources, limits, and tags. Do not convert them into universal levels or percentages.
 
 EXACT JSON STRUCTURE TO RETURN:
 {
@@ -198,6 +198,7 @@ EXACT JSON STRUCTURE TO RETURN:
       "personality": "",
       "backstory": "",
       "abilities_and_limits": "",
+      "capabilities": [{"capability_id": "example", "statement": "What they can demonstrably do", "proficiency": "trained", "sources": ["backstory"], "limits": [], "tags": []}],
       "speech_style": "",
       "secrets": ""
     }

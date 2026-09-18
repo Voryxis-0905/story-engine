@@ -27,6 +27,12 @@ function props(turns: any[]) {
     handleChooseEnding: () => {},
     chatEndRef: { current: null },
     handleSend: () => {},
+    timeSkipOpen: false,
+    setTimeSkipOpen: () => {},
+    timeSkipPreview: null,
+    timeSkipLoading: false,
+    handlePreviewTimeSkip: () => {},
+    handleExecuteTimeSkip: () => {},
     handleStartChapter: () => {},
     handleRegenerate: () => {},
     handleGeneratePrelude: () => {},
@@ -35,6 +41,16 @@ function props(turns: any[]) {
 }
 
 describe('PlayNarrative story rendering', () => {
+  it('shows the three time skip inputs and known deadline warning', () => {
+    const preview = vi.fn();
+    render(<PlayNarrative {...props([])} timeSkipOpen={true} handlePreviewTimeSkip={preview} timeSkipPreview={{ requested_minutes: 1440, granted_minutes: 180, requested_ticks: 24, granted_ticks: 3, start_tick: 0, end_tick: 3, warnings: [{ kind: 'known_deadline', event_id: 'storm', title: 'Storm arrives', deadline_tick: 3, ticks_away: 3 }], will_interrupt: true, stopped_reason: 'known_deadline', requires_confirmation: true, activity: 'Study', forced: false }} />);
+    expect(screen.getByLabelText('Time skip amount')).toBeInTheDocument();
+    expect(screen.getByLabelText('Time skip activity')).toBeInTheDocument();
+    expect(screen.getByLabelText('Interruption policy')).toBeInTheDocument();
+    expect(screen.getByText(/Storm arrives/)).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Preview'));
+    expect(preview).toHaveBeenCalledWith(expect.objectContaining({ amount: 1, unit: 'hours' }));
+  });
   it('renders model output as text and does not execute injected HTML', () => {
     (window as any).__pwned = false;
     const output = 'Safe line\n<img src=x onerror="window.__pwned=true"><script>window.__pwned=true</script>';

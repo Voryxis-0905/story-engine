@@ -2061,6 +2061,73 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(len(turns), 2)
         self.assertEqual(len({(t['chapter_index'], t['turn_index']) for t in turns}), 2)
 
+    def test_time_skip_preview_warns_only_about_discovered_deadlines_and_is_read_only(self):
+        self.write('world_events.json', {'events': [
+            {'event_id': 'known', 'status': 'pending', 'title': 'Known storm', 'deadline_tick': 3},
+            {'event_id': 'secret', 'status': 'pending', 'title': 'Secret coup', 'deadline_tick': 2},
+        ]})
+        self.write('discovery.json', {'discoveries': [{
+            'event_id': 'known', 'source': {'kind': 'rumor'}, 'at_tick': 0, 'known_deadline_tick': 3,
+        }]})
+        before = {p.name: p.read_bytes() for p in self.path.glob('*.json')}
+        response = self.post('time-skip/preview', {
+            'amount': 1, 'unit': 'days', 'activity': 'Study', 'interruption_policy': 'important_events',
+        })
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([w['event_id'] for w in body['warnings']], ['known'])
+        self.assertTrue(body['will_interrupt'])
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.path.glob('*.json')})
+
+    def test_time_skip_execute_owns_clock_and_is_idempotent(self):
+        request = {
+            'amount': 2, 'unit': 'hours', 'activity': 'Practice forms',
+            'interruption_policy': 'complete', 'request_id': 'skip-once',
+        }
+        first = self.post('time-skip/execute', request)
+        self.assertEqual(first.status_code, 200, first.text)
+        clock = self.read('world_config.json')['story_clock']
+        self.assertEqual(clock['elapsed_minutes'], 120)
+        self.assertEqual(clock['tick'], 2)
+        self.assertEqual(first.json()['chapter']['time_skip_resolution']['granted_minutes'], 120)
+        turns = len(self.read('chapters.json')['chapters'])
+        replay = self.post('time-skip/execute', request)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(self.read('world_config.json')['story_clock'], clock)
+        self.assertEqual(len(self.read('chapters.json')['chapters']), turns)
+
+    def test_capability_evidence_satisfies_rule_without_numeric_rank(self):
+        from app.story.action_resolution import resolve_action
+        character = {'hero': {
+            'location': 'dojo', 'inventory': [], 'power_stat': {},
+            'capabilities': [{'capability_id': 'swordsmanship', 'statement': 'Former royal swordmaster',
+                              'proficiency': 'mastered', 'sources': ['backstory']}],
+        }}
+        config = {'action_rules': [{'keywords': ['parry'], 'required_capabilities': ['swordsmanship']}]}
+        result = resolve_action('Parry the blow', character, 'hero', config)
+        self.assertEqual(result['result'], 'success')
+        evidence = next(c for c in result['checks'] if c['name'] == 'capability_evidence')['evidence']
+        self.assertEqual(evidence[0]['evidence']['sources'], ['backstory'])
+
+    def test_item_policies_protect_causal_items_and_require_capability(self):
+        from app.story.inventory import resolve_inventory_action, apply_item_state_effects
+        artifact = {'instance_id': 'world-key-1', 'name': 'World Key', 'item_kind': 'causal_artifact', 'drop_policy': 'bound',
+                    'requirements': ['ritual literacy']}
+        self.assertEqual(resolve_inventory_action('Drop World Key', [artifact], {})['reason'],
+                         'item_is_bound')
+        self.assertEqual(resolve_inventory_action('Use World Key', [artifact], {})['reason'],
+                         'capability_required')
+        character = {'capabilities': [{'capability_id': 'ritual_literacy', 'statement': 'Reads ritual script'}]}
+        artifact['state_effects'] = [
+            {'path': 'status_effects', 'operation': 'add', 'value': {'name': 'Marked by the Key', 'duration': 3}},
+            {'path': 'power_stat.realm', 'operation': 'replace', 'value': 'forbidden'},
+        ]
+        resolution = resolve_inventory_action('Use World Key', [artifact], character)
+        self.assertEqual(resolution['status'], 'resolved')
+        applied = apply_item_state_effects(character, resolution, at_tick=4)
+        self.assertEqual([e['name'] for e in applied], ['Marked by the Key'])
+        self.assertNotIn('power_stat', character)
+
 
 if __name__ == '__main__':
     unittest.main()

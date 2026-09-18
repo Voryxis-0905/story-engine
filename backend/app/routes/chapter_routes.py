@@ -15,7 +15,7 @@ from app.engine import (
 )
 from app.models import (
     ChapterContinueRequest, ChapterStartRequest, LintChapterRequest,
-    RewriteChapterRequest, RegenerateRequest
+    RewriteChapterRequest, RegenerateRequest, TimeSkipRequest
 )
 from app.persistence import commit_world_files, locked_world
 from app.story.inventory import inventory_view
@@ -47,6 +47,38 @@ def chapter_continue(world_name: str, req: ChapterContinueRequest):
         narrator_input=req.user_input,
         request_id=req.request_id,
         expected_revision=req.expected_revision,
+    )
+
+
+def _time_skip_preview(world_name: str, req: TimeSkipRequest):
+    from app.story.discovery import load_discoveries
+    from app.world_events import load_world_events
+    from app.world.time_skip import preview_time_skip
+    world_path = require_world(world_name)
+    config = read_world_file(world_path, "world_config.json")
+    return preview_time_skip(
+        req.model_dump(), config,
+        load_world_events(world_path).get("events", []),
+        load_discoveries(world_path),
+    )
+
+
+@router.post("/worlds/{world_name}/time-skip/preview")
+def time_skip_preview(world_name: str, req: TimeSkipRequest):
+    return _time_skip_preview(world_name, req)
+
+
+@router.post("/worlds/{world_name}/time-skip/execute")
+def time_skip_execute(world_name: str, req: TimeSkipRequest):
+    from app.world.time_skip import display_time_skip
+    preview = _time_skip_preview(world_name, req)
+    return _generate_chapter(
+        world_name,
+        narrator_input=display_time_skip(req.model_dump(), preview),
+        display_input=display_time_skip(req.model_dump(), preview),
+        request_id=req.request_id,
+        expected_revision=req.expected_revision,
+        time_skip_request=req.model_dump(),
     )
 
 
@@ -277,6 +309,7 @@ def get_play_state(world_name: str):
     if protagonist_id and protagonist_id in character_state.get("characters", {}):
         p = character_state["characters"][protagonist_id]
         from app.story.knowledge import project_knowledge_for_subject
+        from app.story.capabilities import capability_evidence
         from app.storage import read_world_canon
         canon_facts = read_world_canon(world_path).get("facts", [])
         protagonist_data = {
@@ -292,7 +325,8 @@ def get_play_state(world_name: str):
             ),
             "alive": p.get("alive", True),
             "relationships": p.get("relationships", {}),
-            "age": p.get("age", "")
+            "age": p.get("age", ""),
+            "capabilities": capability_evidence(p),
         }
 
     total_checkpoints = len(checkpoints)

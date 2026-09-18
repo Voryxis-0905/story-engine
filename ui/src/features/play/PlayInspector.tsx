@@ -63,8 +63,15 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
                           </div>
                         ))}
                         <div className="flex gap-2 text-[10px] font-mono text-[var(--ink-faint)]">
-                          <span>{item.condition}</span>{item.equipped && <span>equipped</span>}{item.charges !== null && item.charges !== undefined && <span>{item.charges} charges</span>}
+                          <span>{item.item_kind || item.category}</span>
+                          {item.condition && item.condition !== 'intact' && <span>{item.condition}</span>}
+                          {item.equipped && <span>equipped</span>}
+                          {item.usage?.mode === 'charges' && <span>{item.usage.remaining ?? item.charges ?? 0} uses left</span>}
+                          {item.usage?.mode === 'quantity' && <span>{item.quantity} available</span>}
+                          {item.destructibility !== 'normal' && <span>{item.destructibility}</span>}
+                          {item.drop_policy === 'bound' && <span>world-bound</span>}
                         </div>
+                        {!!item.requirements?.length && <p className="text-[11px] text-[var(--ink-soft)] mt-1">Requires: {item.requirements.map(r => typeof r === 'string' ? r : String(r.name || r.capability_id || 'capability')).join(', ')}</p>}
                         <div className="flex flex-wrap gap-1 pt-1">
                           {(['Inspect', 'Use'] as const).map((verb) => (
                             <button key={verb} type="button" onClick={() => handleItemAction(verb, item)} className="rounded-lg border border-[var(--line)] px-2 py-1 text-[10px] font-bold">{verb}</button>
