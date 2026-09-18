@@ -35,6 +35,7 @@ MANDATORY RULES:
 18. When "travel_resolution" is present, narrate exactly that route and outcome. For "arrived", use narration_mode and elapsed_minutes as a transition/timeskip; do not invent a different destination or duration. For "interrupted", stop at stopped_at and open a scene from interrupted_leg, its danger and tags. For "blocked", keep the character at the origin and explain the obstacle in-story. For "abandoned", end the saved journey at stopped_at. The engine owns location and clock changes.
 19. When "inventory_resolution" is present, narrate that exact result. A failed item action must not create, consume, equip, or drop an item. A resolved action may only change the referenced item as described by the engine.
 20. When "time_skip_resolution" is present, summarize only the granted duration and the stated activity. The engine owns elapsed time. Stop where the resolution says it stops, do not move the protagonist unless a separate travel resolution exists, and never reveal a hidden event.
+21. `action_resolution.engine_effects` is the executable consequence plan already validated by the engine. Narrate observable effects exactly. An effect with `visibility: hidden` may only be suggested as an uncertain unseen consequence; never reveal its event, outcome, or hidden fact. Do not duplicate effects in state_changes, invent another effect, or replace a locked event outcome. `rejected_effects` are non-executable metadata and must never happen in the story.
 
 EXACT JSON STRUCTURE TO RETURN:
 {

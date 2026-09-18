@@ -295,6 +295,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     )
 
     from app.story.action_resolution import resolve_action
+    from app.world_events import load_world_events
+    world_events_for_turn = load_world_events(state_dir)
     if time_skip_request:
         action_resolution = {
             "action_id": f"skip_{current_checkpoint_id}_{story_clock.get('tick', 0)}",
@@ -315,6 +317,14 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             turn_index=story_clock.get("tick", 0),
             action_id=f"act_{current_checkpoint_id}_{story_clock.get('tick', 0)}",
         )
+    from app.story.action_effects import compile_action_effects, project_action_effects
+    action_effect_plan = compile_action_effects(
+        action_resolution, protagonist_id,
+        character_state.get("characters", {}), world_events_for_turn,
+    )
+    projected_action_effects = project_action_effects(action_effect_plan)
+    action_resolution["engine_effects"] = projected_action_effects["effects"]
+    action_resolution["rejected_effects"] = projected_action_effects["rejected"]
     from app.story.inventory import resolve_inventory_action
     inventory_resolution = resolve_inventory_action(
         narrator_input, protagonist_entry.get("inventory", []) if isinstance(protagonist_entry, dict) else [],
@@ -487,7 +497,13 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
 
     checker_result = run_consistency_checker(
         chapter_text, state_changes, world_config, checkpoint,
-        active_cards, narrative_characters, world_name=world_name
+        active_cards, narrative_characters, world_name=world_name,
+        engine_outcomes={
+            "action_resolution": action_resolution,
+            "inventory_resolution": inventory_resolution,
+            "travel_resolution": travel_resolution,
+            "time_skip_resolution": time_skip_resolution,
+        },
     )
     consistency_rewritten = False
     if checker_result["status"] == "failed":
@@ -519,7 +535,13 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         # never mark a rewrite as passed without running the checker again.
         checker_result = run_consistency_checker(
             chapter_text, state_changes, world_config, checkpoint,
-            active_cards, narrative_characters, world_name=world_name
+            active_cards, narrative_characters, world_name=world_name,
+            engine_outcomes={
+                "action_resolution": action_resolution,
+                "inventory_resolution": inventory_resolution,
+                "travel_resolution": travel_resolution,
+                "time_skip_resolution": time_skip_resolution,
+            },
         )
 
     unchecked_commit_allowed = (
@@ -613,6 +635,14 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         protagonist_changes.pop("inventory_add", None)
         protagonist_changes.pop("inventory_remove", None)
 
+    if any(effect.get("type") in ("inventory_add", "inventory_remove")
+           for effect in action_effect_plan["effects"]):
+        # Declared action consequences own these mutations. Narrator proposals
+        # cannot duplicate or replace them.
+        protagonist_changes = state_changes.setdefault("characters", {}).setdefault(protagonist_id, {})
+        protagonist_changes.pop("inventory_add", None)
+        protagonist_changes.pop("inventory_remove", None)
+
     character_state["characters"] = apply_state_changes(
         character_state["characters"], state_changes,
         trait_definitions=world_config.get("trait_definitions"),
@@ -631,6 +661,14 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         inventory_resolution["applied_state_effects"] = apply_item_state_effects(
             protagonist_after, inventory_resolution, at_tick=turn_start_tick,
         )
+
+    from app.story.action_effects import apply_action_effects, project_action_effect_result
+    action_effect_result = apply_action_effects(
+        action_effect_plan, action_resolution.get("action_id", ""), protagonist_id,
+        character_state["characters"], world_config, world_events_for_turn,
+        at_tick=turn_start_tick,
+    )
+    public_action_effect_result = project_action_effect_result(action_effect_result)
 
     world_config["story_clock"] = story_clock
     if travel_resolution and travel_resolution.get("status") in ("arrived", "interrupted"):
@@ -742,6 +780,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "boundary_correction": boundary_correction,
         "psychology_status": psychology_status,
         "action_resolution": action_resolution,
+        "action_effects": public_action_effect_result,
         "inventory_resolution": inventory_resolution,
         "travel_resolution": travel_resolution,
         "time_skip_resolution": time_skip_resolution,
@@ -802,8 +841,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         (time_skip_resolution.get("granted_ticks", 1) if time_skip_resolution else
          travel_resolution.get("tick_advance", 1) if travel_resolution else 1)
     )
-    from app.world_events import tick_world_events, load_world_events
-    world_events = load_world_events(world_path)
+    from app.world_events import tick_world_events
+    world_events = world_events_for_turn
     resolved = tick_world_events(
         world_events, world_config, character_state["characters"],
         world_canon_store, location_map
@@ -893,8 +932,9 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         updates["discovery.json"] = discovery_store
     if checkpoint_advanced or draft_entities:
         updates["card_registry.json"] = card_registry
-    if resolved:
+    if resolved or action_effect_result.get("events_changed"):
         updates["world_events.json"] = world_events
+    if resolved:
         updates["world_canon_store.json"] = world_canon_store
         if location_map is not None:
             updates["location_map.json"] = location_map

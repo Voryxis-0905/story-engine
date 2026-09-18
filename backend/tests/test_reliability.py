@@ -2122,6 +2122,117 @@ class ReliabilityTests(unittest.TestCase):
         evidence = next(c for c in result['checks'] if c['name'] == 'capability_evidence')['evidence']
         self.assertEqual(evidence[0]['evidence']['sources'], ['backstory'])
 
+    def test_committed_action_effects_drive_event_outcome_before_default(self):
+        config = self.read('world_config.json')
+        config['action_rules'] = [{
+            'keywords': ['sever the crimson seal'],
+            'consequences': [
+                {'type': 'world_flag_set', 'key': 'seal_broken', 'value': True},
+                {'type': 'event_influence', 'event_id': 'eclipse', 'key': 'seal_broken',
+                 'value': True, 'outcome_id': 'eclipse_prevented', 'visibility': 'observable'},
+                {'type': 'knowledge_flag_add', 'flag': 'severed_crimson_seal'},
+            ],
+        }]
+        self.write('world_config.json', config)
+        self.write('world_events.json', {'events': [{
+            'event_id': 'eclipse', 'status': 'pending', 'event_class': 'contingent',
+            'trigger_conditions': [{'field': 'story_clock.tick', 'op': '>=', 'value': 1}],
+            # The default is deliberately first. Engine intervention must win.
+            'outcomes': [
+                {'outcome_id': 'eclipse_happens', 'resolution': 'resolved',
+                 'canon_facts_add': ['The eclipse consumed the valley.']},
+                {'outcome_id': 'eclipse_prevented', 'resolution': 'prevented',
+                 'canon_facts_add': ['The broken seal dispersed the eclipse.']},
+            ],
+        }]})
+        response = self.post('chapter/continue', {
+            'user_input': 'Sever the crimson seal.', 'request_id': 'bridge-once',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        chapter = response.json()['chapter']
+        self.assertEqual(len(chapter['action_effects']['applied']), 3)
+        self.assertEqual(chapter['action_resolution']['engine_effects'][1]['outcome_id'], 'eclipse_prevented')
+        world = self.read('world_config.json')
+        self.assertTrue(world['world_flags']['seal_broken'])
+        self.assertTrue(world['world_flags']['event_influence']['eclipse']['seal_broken'])
+        hero = self.read('character_state.json')['characters']['char_xueli']
+        self.assertIn('severed_crimson_seal', hero['knowledge_flags'])
+        event = self.read('world_events.json')['events'][0]
+        self.assertEqual(event['status'], 'prevented')
+        self.assertEqual(event['resolved_outcome_id'], 'eclipse_prevented')
+        facts = [fact['statement'] for fact in self.read('world_canon_store.json')['facts']]
+        self.assertEqual(facts, ['The broken seal dispersed the eclipse.'])
+        self.assertEqual(len(event['interventions']), 1)
+
+        replay = self.post('chapter/continue', {
+            'user_input': 'Sever the crimson seal.', 'request_id': 'bridge-once',
+        })
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(len(self.read('world_events.json')['events'][0]['interventions']), 1)
+
+    def test_hidden_event_effect_projection_does_not_reveal_secret_branch(self):
+        from app.story.action_effects import compile_action_effects, project_action_effects
+
+        plan = compile_action_effects({
+            'result': 'success',
+            'consequences': [{
+                'type': 'event_influence', 'event_id': 'secret_eclipse',
+                'key': 'seal_broken', 'value': True,
+                'outcome_id': 'secret_eclipse_prevented',
+            }],
+        }, 'hero', {'hero': {}}, {'events': [{
+            'event_id': 'secret_eclipse', 'status': 'pending',
+            'outcomes': [{'outcome_id': 'secret_eclipse_prevented'}],
+        }]})
+
+        self.assertEqual(plan['effects'][0]['event_id'], 'secret_eclipse')
+        self.assertEqual(plan['effects'][0]['outcome_id'], 'secret_eclipse_prevented')
+        public = project_action_effects(plan)['effects'][0]
+        self.assertEqual(public['visibility'], 'hidden')
+        self.assertNotIn('event_id', public)
+        self.assertNotIn('outcome_id', public)
+        self.assertNotIn('seal_broken', str(public))
+        rejected = project_action_effects({'effects': [], 'rejected': [{
+            'index': 0, 'type': 'event_influence', 'reason': 'event_not_pending',
+            'event_id': 'secret_eclipse',
+        }]})['rejected'][0]
+        self.assertNotIn('event_id', rejected)
+        self.assertNotIn('secret_eclipse', str(rejected))
+
+    def test_failed_or_unsupported_action_effects_cannot_mutate_world(self):
+        config = self.read('world_config.json')
+        config['action_rules'] = [{
+            'keywords': ['open forbidden gate'], 'required_tools': ['silver key'],
+            'consequences': [
+                {'type': 'world_flag_set', 'key': 'gate_open', 'value': True},
+                {'type': 'set', 'path': 'characters.char_xueli.alive', 'value': False},
+            ],
+        }]
+        self.write('world_config.json', config)
+        response = self.post('chapter/continue', {'user_input': 'Open forbidden gate.'})
+        self.assertEqual(response.status_code, 200)
+        chapter = response.json()['chapter']
+        self.assertEqual(chapter['action_resolution']['result'], 'impossible')
+        self.assertEqual(chapter['action_effects']['applied'], [])
+        self.assertNotIn('gate_open', self.read('world_config.json').get('world_flags', {}))
+        self.assertTrue(self.read('character_state.json')['characters']['char_xueli']['alive'])
+
+    def test_creator_can_preview_and_replace_action_rules(self):
+        revision = self.read('world_config.json').get('revision', 0)
+        rules = [{'keywords': ['ring bell'], 'consequences': [
+            {'type': 'world_flag_set', 'key': 'bell_rung', 'value': True},
+        ]}]
+        payload = {'expected_revision': revision, 'preview': True, 'reason': 'Add bell interaction',
+                   'changes': [{'kind': 'action_rules', 'value': rules}]}
+        preview = self.post('creator/edit', payload)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertTrue(preview.json()['ok'])
+        self.assertNotEqual(self.read('world_config.json').get('action_rules'), rules)
+        payload['preview'] = False
+        committed = self.post('creator/edit', payload)
+        self.assertEqual(committed.status_code, 200, committed.text)
+        self.assertEqual(self.read('world_config.json')['action_rules'], rules)
+
     def test_item_policies_protect_causal_items_and_require_capability(self):
         from app.story.inventory import resolve_inventory_action, apply_item_state_effects, apply_inventory_resolution, normalize_item
         artifact = {'instance_id': 'world-key-1', 'name': 'World Key', 'item_kind': 'causal_artifact', 'drop_policy': 'bound',

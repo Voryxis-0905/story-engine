@@ -56,7 +56,8 @@ def run_extractor_cross_check(
 def build_consistency_checker_payload(chapter_text: str, state_changes: dict,
                                         world_config: dict, checkpoint: dict,
                                         active_cards: list,
-                                        character_state_before: dict) -> dict:
+                                        character_state_before: dict,
+                                        engine_outcomes: dict = None) -> dict:
     return {
         "fixed_rules": world_config.get("fixed_rules", []),
         "trait_definitions": world_config.get("trait_definitions", {}),
@@ -68,7 +69,8 @@ def build_consistency_checker_payload(chapter_text: str, state_changes: dict,
         ],
         "character_state_before_chapter": character_state_before,
         "chapter_text": chapter_text,
-        "proposed_state_changes": state_changes
+        "proposed_state_changes": state_changes,
+        "engine_committed_outcomes": engine_outcomes or {},
     }
 
 
@@ -133,10 +135,11 @@ def parse_checker_response(raw_text: str) -> dict:
 
 def run_consistency_checker(chapter_text: str, state_changes: dict, world_config: dict,
                              checkpoint: dict, active_cards: list,
-                             character_state_before: dict, world_name: str = None) -> dict:
+                             character_state_before: dict, world_name: str = None,
+                             engine_outcomes: dict = None) -> dict:
     payload = build_consistency_checker_payload(
         chapter_text, state_changes, world_config, checkpoint,
-        active_cards, character_state_before
+        active_cards, character_state_before, engine_outcomes
     )
     try:
         raw = call_llm(

@@ -26,7 +26,7 @@ CONSISTENCY_CHECKER_SYSTEM_PROMPT = """You are a consistency checker for an inte
 
 YOU RUN IN A SEPARATE CONTEXT, sharing no context with the narrator — the point is to avoid being an "accomplice" to whatever mistake the narrator just made, so evaluate objectively, based only on the data given in this payload.
 
-CANON DATA PROVIDED includes: "fixed_rules" (the world's hard rules, must never be violated), "trait_definitions" (allowed character traits and their valid values), "titles" (exclusive character titles), "current_checkpoint_description", "active_cards" (character/lore information currently allowed to be known), "character_state_before_chapter" (character state immediately BEFORE this chapter).
+CANON DATA PROVIDED includes: "fixed_rules" (the world's hard rules, must never be violated), "trait_definitions" (allowed character traits and their valid values), "titles" (exclusive character titles), "current_checkpoint_description", "active_cards" (character/lore information currently allowed to be known), "character_state_before_chapter" (character state immediately BEFORE this chapter), and "engine_committed_outcomes" (action, inventory, travel, time-skip, and whitelisted effects the narrator is required to follow).
 
 EVALUATION RULES:
 1. Return raw JSON only — no markdown, no code fences, no preamble or closing remarks.
@@ -40,6 +40,7 @@ EVALUATION RULES:
 6. If "chapter_text" mixes multiple languages within itself (stray words, particles, or characters from another language breaking the flow), flag it as an issue. Treat it as "minor" by default; only escalate to "major" if the mixing is so heavy the passage becomes hard to follow as a coherent scene.
 7. If proposed_state_changes contains "traits_set", you MUST check if those traits exist in "trait_definitions" and have a valid value. If a trait is used but not defined, or its value is invalid, flag it as a "major" issue.
 8. If multiple characters are given a title defined in "titles" that is clearly meant to be exclusive, flag it as a "major" issue.
+9. Treat a direct contradiction of `engine_committed_outcomes` as major. Examples: narrating success when the engine returned failure, consuming an item after a failed use, arriving somewhere other than the travel destination, changing elapsed time, omitting or reversing an observable engine effect, or narrating a rejected effect as real. Hidden effects need not be narrated and their secret details must not be inferred. Do not require the prose to name every internal flag; evaluate the observable story consequence.
 
 EXACT JSON STRUCTURE TO RETURN:
 {

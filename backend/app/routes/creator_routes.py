@@ -453,7 +453,7 @@ def update_foreshadowings(world_name: str, req: ForeshadowingsUpdateReq):
 _EDITABLE_CHARACTER_FIELDS = frozenset({
     "alive", "location", "inventory", "knowledge_flags", "relationships",
     "karma", "age", "appearance", "personality", "backstory",
-    "abilities_and_limits", "speech_style", "secrets",
+    "abilities_and_limits", "speech_style", "secrets", "capabilities",
 })
 
 
@@ -510,7 +510,7 @@ def creator_edit(world_name: str, req: dict):
             if field == "alive" and not isinstance(value, bool):
                 errors.append("alive must be a boolean")
                 continue
-            if field in ("inventory", "knowledge_flags") and not isinstance(value, list):
+            if field in ("inventory", "knowledge_flags", "capabilities") and not isinstance(value, list):
                 errors.append(f"{field} must be a list")
                 continue
             if field == "relationships" and not isinstance(value, dict):
@@ -562,6 +562,13 @@ def creator_edit(world_name: str, req: dict):
                 continue
             world_config["active_journey"] = value
             applied.append({"kind": "active_journey"})
+        elif kind == "action_rules":
+            value = change.get("value")
+            if not isinstance(value, list) or any(not isinstance(rule, dict) for rule in value):
+                errors.append("action_rules must be a list of objects")
+                continue
+            world_config["action_rules"] = value
+            applied.append({"kind": "action_rules", "count": len(value)})
         elif kind == "fact_override":
             fact_id = change.get("fact_id")
             statement = change.get("statement")
