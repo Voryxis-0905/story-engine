@@ -38,7 +38,9 @@ def preview_time_skip(request: dict, world_config: dict, events: list, discoveri
     granted_ticks = requested_ticks
     stopped_reason = None
     if deadlines and not force and policy != "complete":
-        granted_ticks = max(1, min(deadlines) - start_tick)
+        # Stop one logical turn before a known deadline so the warning preserves
+        # player agency: their next action can still alter the event's outcome.
+        granted_ticks = max(0, min(deadlines) - start_tick - 1)
         stopped_reason = "known_deadline"
     granted_minutes = min(requested_minutes, granted_ticks * tick_minutes)
     return {
@@ -47,6 +49,7 @@ def preview_time_skip(request: dict, world_config: dict, events: list, discoveri
         "start_tick": start_tick, "end_tick": start_tick + granted_ticks,
         "warnings": warnings, "will_interrupt": granted_ticks < requested_ticks,
         "stopped_reason": stopped_reason, "requires_confirmation": bool(warnings),
+        "blocked": granted_ticks == 0,
         "activity": str(request.get("activity") or "Pass the time"),
         "interruption_policy": policy, "forced": force,
     }

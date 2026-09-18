@@ -72,6 +72,12 @@ def time_skip_preview(world_name: str, req: TimeSkipRequest):
 def time_skip_execute(world_name: str, req: TimeSkipRequest):
     from app.world.time_skip import display_time_skip
     preview = _time_skip_preview(world_name, req)
+    if preview.get("blocked"):
+        raise HTTPException(status_code=409, detail={
+            "reason": "known_deadline_imminent",
+            "message": "A known deadline is imminent. Act now or use Creator override.",
+            "preview": preview,
+        })
     return _generate_chapter(
         world_name,
         narrator_input=display_time_skip(req.model_dump(), preview),

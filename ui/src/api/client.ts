@@ -128,6 +128,7 @@ export interface TimeSkipPreview {
   requires_confirmation: boolean;
   activity: string;
   forced: boolean;
+  blocked?: boolean;
 }
 
 export interface ChapterContinueResponse {

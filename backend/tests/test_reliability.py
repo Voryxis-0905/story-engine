@@ -2077,7 +2077,20 @@ class ReliabilityTests(unittest.TestCase):
         body = response.json()
         self.assertEqual([w['event_id'] for w in body['warnings']], ['known'])
         self.assertTrue(body['will_interrupt'])
+        self.assertEqual(body['granted_ticks'], 2)
+        self.assertEqual(body['end_tick'], 2)
         self.assertEqual(before, {p.name: p.read_bytes() for p in self.path.glob('*.json')})
+
+        config = self.read('world_config.json')
+        config['story_clock']['tick'] = 2
+        self.write('world_config.json', config)
+        imminent = self.post('time-skip/execute', {
+            'amount': 1, 'unit': 'hours', 'activity': 'Wait',
+            'interruption_policy': 'important_events',
+        })
+        self.assertEqual(imminent.status_code, 409)
+        self.assertEqual(imminent.json()['detail']['reason'], 'known_deadline_imminent')
+        self.assertEqual(len(self.read('chapters.json')['chapters']), 0)
 
     def test_time_skip_execute_owns_clock_and_is_idempotent(self):
         request = {
