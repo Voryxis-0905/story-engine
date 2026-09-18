@@ -38,6 +38,7 @@ export const WorldBuilderModal: React.FC<WorldBuilderModalProps> = ({ isOpen, on
 
   // Step 4: Prelude text
   const [preludeText, setPreludeText] = useState<string | null>(null);
+  const [replanPlan, setReplanPlan] = useState<{ regenerate_steps: string[]; preserved_steps: string[]; note: string } | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,37 +97,60 @@ export const WorldBuilderModal: React.FC<WorldBuilderModalProps> = ({ isOpen, on
       const respondRes = await api.builder.interviewRespond(conceptPrompt.trim(), answers, scopeType);
       const finalPrompt = respondRes.refined_prompt || conceptPrompt.trim();
 
-      // 2. Create World with initial prompt & scope
+      // 2. Create World with initial prompt & scope (may already exist from an
+      // interrupted build — resume instead of failing).
       setGenProgressText('Initializing world repository...');
-      await api.worlds.create(sanitizedName, {
-        prompt: finalPrompt,
-        scope_type: scopeType,
-        interaction_mode: 'normal',
-      });
+      try {
+        await api.worlds.create(sanitizedName, {
+          prompt: finalPrompt,
+          scope_type: scopeType,
+          interaction_mode: 'normal',
+        });
+      } catch {
+        // Existing world: continue from wherever the draft stopped.
+      }
 
-      // 3. Phase 1: Skeleton & Checkpoints Timeline
-      setGenPhase('skeleton');
-      setGenProgressText('Phase 1/4: Generating narrative skeleton & canon checkpoints...');
-      await api.builder.step(sanitizedName);
+      let status = 'skeleton';
+      try {
+        status = (await api.builder.status(sanitizedName)).creation_status;
+      } catch {
+        // No draft yet; start from the beginning.
+      }
 
-      // Confirm Checkpoints to transition status to "cards"
-      await api.builder.confirmCheckpoints(sanitizedName);
+      if (status === 'skeleton') {
+        setGenPhase('skeleton');
+        setGenProgressText('Phase 1/4: Generating narrative skeleton & canon checkpoints...');
+        await api.builder.step(sanitizedName);
+        await api.builder.confirmCheckpoints(sanitizedName);
+        status = 'cards';
+      }
 
-      // 4. Phase 2: Lore Cards
-      setGenPhase('cards');
-      setGenProgressText('Phase 2/4: Generating world lore, factions, & items...');
-      await api.builder.step(sanitizedName);
+      if (status === 'cards') {
+        setGenPhase('cards');
+        setGenProgressText('Phase 2/4: Generating world lore, factions, & items...');
+        await api.builder.step(sanitizedName);
+        status = 'characters';
+      }
 
-      // 5. Phase 3: Characters & Location Map
-      setGenPhase('characters');
-      setGenProgressText('Phase 3/4: Synthesizing character attributes & location map...');
-      await api.builder.step(sanitizedName);
+      if (status === 'characters') {
+        setGenPhase('characters');
+        setGenProgressText('Phase 3/4: Synthesizing characters, location map & events...');
+        await api.builder.step(sanitizedName);
+      }
+
+      // Phase 3b: ensure background events exist (idempotent across retries).
+      setGenProgressText('Phase 3/4: Preparing world events & quests...');
+      await api.builder.events(sanitizedName);
 
       // 6. Phase 4: Narrative Prelude
       setGenPhase('prelude');
       setGenProgressText('Phase 4/4: Writing opening prelude...');
-      const preludeRes = await api.play.prelude.generate(sanitizedName);
-      setPreludeText(preludeRes?.prelude?.chapter_text || preludeRes?.prelude_text || 'In an ancient realm bound by mysterious covenants...');
+      try {
+        const preludeRes = await api.play.prelude.generate(sanitizedName);
+        setPreludeText(preludeRes?.prelude?.chapter_text || preludeRes?.prelude_text || 'In an ancient realm bound by mysterious covenants...');
+      } catch {
+        setPreludeText('A prelude already exists for this world. Confirm it to start playing.');
+      }
 
       // Complete! Transition to Step 4
       setStep(4);
@@ -164,6 +188,37 @@ export const WorldBuilderModal: React.FC<WorldBuilderModalProps> = ({ isOpen, on
       setPreludeText(preludeRes?.prelude?.chapter_text || preludeRes?.prelude_text || 'Prelude regenerated...');
     } catch (e: any) {
       setError(e.message || 'Failed to regenerate prelude');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Preview what a concept change would regenerate; hand-edited steps are kept.
+  const handleReplan = async () => {
+    const sanitizedName = worldName.trim().replace(/\s+/g, '_');
+    setLoading(true);
+    setError(null);
+    try {
+      const plan = await api.builder.replan(sanitizedName, conceptPrompt.trim());
+      setReplanPlan(plan);
+    } catch (e: any) {
+      setError(e.message || 'Failed to plan the concept change');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApplyReplan = async () => {
+    const sanitizedName = worldName.trim().replace(/\s+/g, '_');
+    setLoading(true);
+    setError(null);
+    try {
+      await api.builder.applyReplan(sanitizedName);
+      setReplanPlan(null);
+      setPreludeText(null);
+      setStep(2);
+    } catch (e: any) {
+      setError(e.message || 'Failed to apply the concept change');
     } finally {
       setLoading(false);
     }
@@ -396,6 +451,19 @@ export const WorldBuilderModal: React.FC<WorldBuilderModalProps> = ({ isOpen, on
               <div className="p-5 rounded-2xl bg-[var(--bg-subtle)] border border-[var(--line-2)] text-[var(--ink-main)] text-sm leading-relaxed font-serif max-h-64 overflow-y-auto shadow-inner whitespace-pre-wrap">
                 {preludeText || 'Narrative prelude loading...'}
               </div>
+
+              {replanPlan && (
+                <div className="p-4 rounded-xl bg-[var(--bg-subtle)] border border-[var(--line-2)] text-xs space-y-1.5">
+                  <p className="font-bold text-[var(--ink-main)]">Concept change preview</p>
+                  <p className="text-[var(--ink-soft)]">
+                    Will regenerate: <span className="font-mono">{replanPlan.regenerate_steps.join(', ') || 'none'}</span>
+                  </p>
+                  <p className="text-[var(--ink-soft)]">
+                    Kept (edited by hand): <span className="font-mono">{replanPlan.preserved_steps.join(', ') || 'none'}</span>
+                  </p>
+                  <p className="text-[var(--ink-faint)]">{replanPlan.note}</p>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -460,14 +528,35 @@ export const WorldBuilderModal: React.FC<WorldBuilderModalProps> = ({ isOpen, on
 
           {step === 4 && (
             <>
-              <button
-                onClick={handleRegeneratePrelude}
-                disabled={loading}
-                className="pill-btn pill-btn-secondary px-5 py-2 text-xs flex items-center gap-1.5"
-              >
-                <ArrowPathIcon className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                <span>Regenerate Prelude</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleRegeneratePrelude}
+                  disabled={loading}
+                  className="pill-btn pill-btn-secondary px-5 py-2 text-xs flex items-center gap-1.5"
+                >
+                  <ArrowPathIcon className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  <span>Regenerate Prelude</span>
+                </button>
+                {replanPlan ? (
+                  <button
+                    onClick={handleApplyReplan}
+                    disabled={loading}
+                    className="pill-btn px-5 py-2 text-xs flex items-center gap-1.5 border border-[var(--line-2)]"
+                  >
+                    <ArrowPathIcon className="w-3.5 h-3.5" />
+                    <span>Apply replan &amp; regenerate</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleReplan}
+                    disabled={loading || !conceptPrompt.trim()}
+                    className="pill-btn px-5 py-2 text-xs flex items-center gap-1.5 border border-[var(--line-2)] disabled:opacity-50"
+                  >
+                    <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5" />
+                    <span>Change concept &amp; preview</span>
+                  </button>
+                )}
+              </div>
               <button
                 onClick={handleConfirmPrelude}
                 disabled={loading}

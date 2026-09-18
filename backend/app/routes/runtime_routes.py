@@ -13,6 +13,40 @@ except ImportError:
 router = APIRouter()
 
 
+def _resolve_api_key_action(req: RuntimeConfigUpdate) -> str:
+    """Resolve a runtime key write into keep / replace / delete.
+
+    A blank or masked value means "keep" so the UI can save a model without
+    resending the secret (which it never receives back from GET).
+    """
+    if req.api_key_action in ("keep", "replace", "delete"):
+        return req.api_key_action
+    raw = req.api_key if req.api_key is not None else req.openrouter_api_key
+    if raw is None:
+        return "keep"
+    text = str(raw).strip()
+    if text == "" or "\u2026" in text or "*" in text:
+        return "keep"
+    return "replace"
+
+
+def _sync_single_chain_node(chain, *, api_key: str = None, model: str = None):
+    """Update the world-owned single-node chain in place, keeping everything else.
+
+    Only touches a chain that is exactly one node (the effective single config).
+    A multi-node chain is left as the user configured it; a missing chain stays
+    missing so it is rebuilt from the top-level key/model.
+    """
+    if not isinstance(chain, list) or len(chain) != 1 or not isinstance(chain[0], dict):
+        return chain if isinstance(chain, list) else []
+    node = dict(chain[0])
+    if api_key is not None:
+        node["api_key"] = api_key
+    if model is not None:
+        node["model"] = model
+    return [node]
+
+
 
 @router.get("/runtime-config")
 def get_runtime_config():
@@ -22,10 +56,18 @@ def get_runtime_config():
 @router.put("/runtime-config")
 def update_runtime_config(req: RuntimeConfigUpdate):
     cfg = read_runtime_config()
-    api_key_val = req.api_key if req.api_key is not None else req.openrouter_api_key
-    if api_key_val is not None:
-        cfg["openrouter_api_key"] = api_key_val.strip()
-        cfg["api_key"] = api_key_val.strip()
+    key_action = _resolve_api_key_action(req)
+    raw_key = req.api_key if req.api_key is not None else req.openrouter_api_key
+
+    if key_action == "delete":
+        cfg["openrouter_api_key"] = ""
+        cfg["api_key"] = ""
+        cfg["fallback_chain"] = []
+    elif key_action == "replace":
+        key_val = (raw_key or "").strip()
+        cfg["openrouter_api_key"] = key_val
+        cfg["api_key"] = key_val
+    # key_action == "keep": leave the stored secret untouched
 
     model_val = req.model_name if req.model_name is not None else req.openrouter_model
     if model_val is not None:
@@ -48,13 +90,27 @@ def update_runtime_config(req: RuntimeConfigUpdate):
 
     if req.fallback_chain is not None:
         cfg["fallback_chain"] = _sanitize_and_preserve_fallback_chain(req.fallback_chain, cfg.get("fallback_chain", []))
-    elif eff_key:
+    elif key_action == "replace" and eff_key:
         cfg["fallback_chain"] = [{
             "provider": eff_provider,
             "model": eff_model,
             "api_key": eff_key,
             "base_url": eff_base_url
         }]
+    else:
+        # The single stored node is the effective provider target. Keep its secret
+        # but follow model/provider/base-url changes, otherwise the LLM client
+        # (which reads the chain first) would keep using the old target.
+        # A user-configured multi-node chain is left untouched.
+        existing_chain = cfg.get("fallback_chain")
+        if isinstance(existing_chain, list) and len(existing_chain) == 1 and isinstance(existing_chain[0], dict):
+            node = dict(existing_chain[0])
+            node["provider"] = eff_provider or node.get("provider", "openrouter")
+            if eff_model:
+                node["model"] = eff_model
+            node["base_url"] = eff_base_url
+            node["api_key"] = node.get("api_key", "") or eff_key
+            cfg["fallback_chain"] = [node]
     if req.creator_mode_enabled is not None:
         cfg["creator_mode_enabled"] = req.creator_mode_enabled
     if req.role_assignments is not None:
@@ -101,10 +157,24 @@ def get_world_runtime_config(world_name: str):
 def update_world_runtime_config(world_name: str, req: RuntimeConfigUpdate):
     require_world(world_name)
     cfg = read_world_runtime_override(world_name)
-    if req.openrouter_api_key is not None:
-        cfg["openrouter_api_key"] = req.openrouter_api_key.strip()
+    key_action = _resolve_api_key_action(req)
+    raw_key = req.api_key if req.api_key is not None else req.openrouter_api_key
+    if key_action == "delete":
+        cfg["openrouter_api_key"] = ""
+        cfg["fallback_chain"] = []
+    elif key_action == "replace":
+        new_key = (raw_key or "").strip()
+        cfg["openrouter_api_key"] = new_key
+        # A world-owned single-node chain must not shadow the freshly stored key.
+        cfg["fallback_chain"] = _sync_single_chain_node(cfg.get("fallback_chain"), api_key=new_key)
     if req.openrouter_model is not None:
         cfg["openrouter_model"] = req.openrouter_model.strip()
+        # Only the world's own model is updated here; provider/base_url of a
+        # world-owned chain must never be taken from the app config just because
+        # an unrelated field (e.g. editor_enabled) was saved.
+        cfg["fallback_chain"] = _sync_single_chain_node(
+            cfg.get("fallback_chain"), model=req.openrouter_model.strip()
+        )
     if req.fallback_chain is not None:
         cfg["fallback_chain"] = _sanitize_and_preserve_fallback_chain(req.fallback_chain, cfg.get("fallback_chain", []))
     if req.role_assignments is not None:

@@ -31,6 +31,7 @@ MANDATORY RULES:
    - tier_3_canon_filter: Entity-tagged world facts (people, places, lore) already filtered to the active scene. These are canonical constraints you must respect.
     - tier_4_thread_ledger: Active narrative threads with their resolution deadlines (open_threads) and foreshadowing hints (foreshadowing_tracker). Advance or resolve threads and hints naturally; do not let deadlines expire without narrative consequence.
 16. When a scene involves more than one character present and aware of each other, prefer showing their exchange through actual spoken dialogue rather than only narration or internal summary of what was said. Use dialogue naturally where it serves the scene; do not force it into solitary or introspective scenes that do not call for it.
+17. The payload includes "action_resolution": the engine has already committed the outcome of the player's action ("result" is one of success/partial/failure/conditional/impossible, with "reason" and "continuation"). You MUST narrate that committed result and must NOT change it — a success cannot become a failure, and an impossible/conditional action cannot succeed this turn. When "alternatives" or "continuation" are present, offer them as the next opening instead of resolving them now.
 
 EXACT JSON STRUCTURE TO RETURN:
 {
@@ -105,6 +106,11 @@ PLANNER_SYSTEM_PROMPT = """You are the plot planner agent for an interactive sto
    - "Balanced": Most turns have friction; occasional quiet beats for breathing room are fine, but avoid two or more consecutive quiet beats.
    - "Slowburn": Can mix friction and quiet beats more freely. Let tension simmer beneath atmospheric description. A quiet beat should still feel charged with potential — the calm before a storm.
    Friction must arise naturally from the scene's situation, character motivations, or story stakes — never from arbitrary or deus ex machina events.
+
+# EVENT OUTCOMES — OPEN RESOLUTION, HONEST PREMISES
+7. A checkpoint/event is something that happens, not a fixed scripted scene. When its premise no longer holds (the organizing actor is dead, the location is gone, or the player prevented the cause), resolve it honestly as prevented, transformed, or missed with a real consequence. Never invent an absurd obstacle just to force the original outcome.
+8. A missed, prevented, partial or failed outcome must still open a new direction — the story never dead-ends.
+9. Keep character knowledge limited to what each character could observe (present location) or has been told; do not use omniscient narration to leak secrets to characters who were not there.
 
 # WORLD CANON STORE — CROSS-BRANCH FACT DISCIPLINE
 7. The payload includes a "world_canon_facts" array: established world-wide facts that are immutable across all narrative branches. BEFORE generating any new statement for "facts_this_turn" or "state_changes", you MUST first check whether the information already exists in "world_canon_facts". If it does, reuse the exact fact wording — do NOT invent an alternative version.

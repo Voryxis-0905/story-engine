@@ -6,6 +6,7 @@
 2. [Nguyên tắc thiết kế](DESIGN-PRINCIPLES.md): quyền của player/creator, thế giới và checkpoint.
 3. [Bản đồ codebase](CODEBASE.md): trách nhiệm từng module và nơi bắt đầu sửa.
 4. [Hướng dẫn đóng góp](../CONTRIBUTING.md): quy trình thay đổi và kiểm tra.
+5. [Backlog giao agent](AGENT-BACKLOG.md): task, dependency, tiêu chí nghiệm thu và prompt mẫu; lập từ mốc `fc55b72`, cần đối chiếu khi code thay đổi.
 
 ## Thiết kế và lịch sử
 

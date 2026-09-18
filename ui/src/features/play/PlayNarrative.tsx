@@ -1,9 +1,9 @@
 import type { PlaySession } from './usePlaySession';
 import { ArrowPathIcon, ChevronDownIcon, ChevronUpIcon, PaperAirplaneIcon, PlayIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
-type Props = Pick<PlaySession, 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'chatEndRef' | 'handleSend' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
+type Props = Pick<PlaySession, 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'draft' | 'handleDismissDraft' | 'handleRetryDraft' | 'epilogue' | 'lifecycleStatus' | 'epilogueChoices' | 'handleLoadEndgameChoices' | 'handleChooseEnding' | 'chatEndRef' | 'handleSend' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
 
-export function PlayNarrative({ turns, input, setInput, loading, error, setError, outputLength, setOutputLength, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, chatEndRef, handleSend, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
+export function PlayNarrative({ turns, input, setInput, loading, error, setError, outputLength, setOutputLength, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, draft, handleDismissDraft, handleRetryDraft, epilogue, lifecycleStatus, epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
   return (<>
       {/* CENTER NARRATIVE MAIN VIEW */}
       <main className="flex-1 flex flex-col h-full bg-[var(--bg-surface)] relative">
@@ -57,6 +57,37 @@ export function PlayNarrative({ turns, input, setInput, loading, error, setError
           <div className="mx-6 mt-4 p-3 rounded-xl bg-[rgba(var(--danger-rgb),0.12)] border border-[rgba(var(--danger-rgb),0.3)] text-[var(--danger)] text-xs font-bold flex items-center justify-between">
             <span>{error}</span>
             <button onClick={() => setError(null)}><XMarkIcon className="w-5 h-5" /></button>
+          </div>
+        )}
+
+        {/* Not-saved draft: the checker blocked the turn, so nothing was
+            committed. Keep the text visible and offer a retry path. */}
+        {draft && (
+          <div className="mx-6 mt-4 p-4 rounded-xl bg-[rgba(var(--warn-rgb),0.10)] border border-[rgba(var(--warn-rgb),0.35)] text-[var(--ink-main)] shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-[var(--warn)]">
+                Draft — not saved ({draft.status})
+              </span>
+              <button
+                onClick={handleDismissDraft}
+                className="text-xs font-bold text-[var(--ink-soft)] hover:text-[var(--ink-main)] underline decoration-dotted"
+              >
+                Dismiss
+              </button>
+            </div>
+            {draft.message && <p className="mt-1 text-xs text-[var(--ink-soft)]">{draft.message}</p>}
+            <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-sm font-serif leading-relaxed border-t border-[var(--line-2)] pt-2">
+              {draft.text}
+            </div>
+            <div className="mt-3 flex items-center justify-end">
+              <button
+                onClick={handleRetryDraft}
+                disabled={loading}
+                className="pill-btn pill-btn-primary px-4 py-2 text-xs font-bold disabled:opacity-50"
+              >
+                Retry action
+              </button>
+            </div>
           </div>
         )}
 
@@ -189,10 +220,9 @@ export function PlayNarrative({ turns, input, setInput, loading, error, setError
                       </div>
                     </div>
 
-                    <div
-                      className="text-[var(--ink-main)] text-[16px] leading-loose font-serif space-y-5 whitespace-pre-wrap"
-                      dangerouslySetInnerHTML={{ __html: turn.output.replace(/\n/g, '<br />') }}
-                    />
+                    <div className="text-[var(--ink-main)] text-[16px] leading-loose font-serif space-y-5 whitespace-pre-wrap">
+                      {turn.output}
+                    </div>
 
                     {/* Turn Card Footer & Contextual Reroll Button */}
                     <div className="flex items-center justify-between pt-4 border-t border-[var(--line-2)] text-xs text-[var(--ink-soft)] font-mono">
@@ -218,7 +248,45 @@ export function PlayNarrative({ turns, input, setInput, loading, error, setError
           <div ref={chatEndRef} />
         </div>
 
+        {/* Endgame / Epilogue */}
+        {lifecycleStatus === 'endgame_pending' && (
+          <div className="mx-6 mt-4 p-4 rounded-xl bg-[rgba(var(--sakura-rgb),0.10)] border border-[rgba(var(--sakura-rgb),0.35)]">
+            <p className="text-sm font-bold text-[var(--ink-main)]">The ending is within reach.</p>
+            {epilogueChoices.length === 0 ? (
+              <button
+                onClick={handleLoadEndgameChoices}
+                disabled={loading}
+                className="pill-btn pill-btn-primary mt-3 px-4 py-2 text-xs font-bold disabled:opacity-50"
+              >
+                Choose how it ends
+              </button>
+            ) : (
+              <div className="mt-3 flex flex-col gap-2">
+                {epilogueChoices.map((choice) => (
+                  <button
+                    key={choice}
+                    onClick={() => handleChooseEnding(choice)}
+                    disabled={loading}
+                    className="pill-btn pill-btn-secondary px-4 py-2 text-xs font-bold text-left disabled:opacity-50"
+                  >
+                    {choice}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {lifecycleStatus === 'completed' && epilogue && (
+          <div className="mx-6 mt-4 p-5 rounded-xl bg-[var(--bg-subtle)] border border-[var(--line-2)]">
+            <p className="text-xs font-mono uppercase font-bold tracking-wider text-[var(--ink-soft)] mb-2">Epilogue</p>
+            <div className="text-[15px] leading-relaxed font-serif whitespace-pre-wrap text-[var(--ink-main)]">{epilogue.text}</div>
+            <p className="mt-3 text-xs text-[var(--ink-soft)]">The story has ended. Create a branch from a save to explore another path.</p>
+          </div>
+        )}
+
         {/* Bottom Action Input Bar */}
+        {lifecycleStatus !== 'completed' && (
         <div className="p-4 border-t border-[var(--line-2)] glass-panel z-10">
           <div className="max-w-4xl mx-auto flex items-center gap-3">
             <input
@@ -240,6 +308,7 @@ export function PlayNarrative({ turns, input, setInput, loading, error, setError
             </button>
           </div>
         </div>
+        )}
       </main>
 
 

@@ -35,3 +35,6 @@ jobs:
       - run: npm --prefix ui ci
       - run: npm run build
       - run: npm run lint
+      - run: npm --prefix ui run test
+      - run: npm --prefix ui exec -- playwright install --with-deps chromium
+      - run: npm --prefix ui run test:e2e

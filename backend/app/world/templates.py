@@ -2,9 +2,24 @@
 from typing import Dict
 from typing import List
 
+# Bump when the persisted world/save shape changes, and add a matching
+# migration step in app/world/schema.py. Worlds without the field are v1.
+SCHEMA_VERSION = 5
+
+STYLE_CARD_TEMPLATE = {
+    "perspective": "third_person_limited",
+    "voice": "narrative",
+    "pacing": "moderate",
+    "tone": "balanced",
+    "prose_guidelines": [],
+    "taboo_words": [],
+    "custom_instructions": ""
+}
+
 
 TEMPLATES = {
     "world_config.json": {
+        "schema_version": SCHEMA_VERSION,
         "display_name": "",
         "genre": "",
         "power_system": "",
@@ -40,7 +55,10 @@ TEMPLATES = {
         "lifecycle_status": "active",
         "world_flags": {},
         "target_ending_scenario": None,
-        "quest_board_enabled": False
+        "quest_board_enabled": False,
+        "allow_unchecked_commit": False,
+        "revision": 0,
+        "pre_turn_snapshot": None
     },
     "card_registry.json": {
         "cards": []
@@ -67,7 +85,11 @@ TEMPLATES = {
     },
     "world_events.json": {
         "events": []
-    }
+    },
+    "discovery.json": {
+        "discoveries": []
+    },
+    "style_card.json": STYLE_CARD_TEMPLATE
 }
 
 

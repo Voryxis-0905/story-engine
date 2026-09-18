@@ -4,7 +4,7 @@ import os
 
 from app.storage import (
     require_world, world_path_of, read_world_file, write_world_file,
-    has_real_api_key
+    has_real_api_key, bump_world_revision
 )
 from app.engine import (
     TEMPLATES, DEFAULT_STORY_CLOCK, find_checkpoint, _generate_chapter,
@@ -15,7 +15,7 @@ from app.engine import (
 )
 from app.models import (
     ChapterContinueRequest, ChapterStartRequest, LintChapterRequest,
-    RewriteChapterRequest
+    RewriteChapterRequest, RegenerateRequest
 )
 from app.persistence import commit_world_files, locked_world
 
@@ -28,16 +28,30 @@ except ImportError:
 router = APIRouter()
 
 
+def _read_epilogue(world_path: str):
+    try:
+        data = read_world_file(world_path, "chapters.json")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    epilogue = data.get("epilogue")
+    if isinstance(epilogue, dict) and epilogue.get("text"):
+        return epilogue
+    return None
+
+
 @router.post("/worlds/{world_name}/chapter/continue")
 def chapter_continue(world_name: str, req: ChapterContinueRequest):
-    return _generate_chapter(world_name, narrator_input=req.user_input)
+    return _generate_chapter(
+        world_name,
+        narrator_input=req.user_input,
+        request_id=req.request_id,
+        expected_revision=req.expected_revision,
+    )
 
 
 @router.post("/worlds/{world_name}/chapter/start")
 def chapter_start(world_name: str, req: ChapterStartRequest):
-    world_path = world_path_of(world_name)
-    if not os.path.isdir(world_path):
-        raise HTTPException(status_code=404, detail="World not found")
+    world_path = require_world(world_name)
 
     chapters_data = read_world_file(world_path, "chapters.json")
     non_prelude_chapters = [c for c in chapters_data["chapters"] if c.get("chapter_index") != 0]
@@ -82,6 +96,7 @@ def chapter_start(world_name: str, req: ChapterStartRequest):
                      "bypassed narrator/consistency checker.",
             "boundary_correction": None,
             "consistency_check": {
+                "status": "unavailable",
                 "severity": "none",
                 "issues": [],
                 "explanation": "Skipped check because this content is user-written, bypassed narrator.",
@@ -90,12 +105,14 @@ def chapter_start(world_name: str, req: ChapterStartRequest):
         }
         chapters_data["chapters"] = [chapter_record]
         write_world_file(world_path, "chapters.json", chapters_data)
+        revision = bump_world_revision(world_path)
         return {
             "chapter": chapter_record,
             "state_changes_applied": {"characters": {}, "notes": ""},
             "used_mock_llm": False,
             "checkpoint_advanced": False,
-            "lore_rag_filter": None
+            "lore_rag_filter": None,
+            "revision": revision,
         }
 
     canon_timeline = read_world_file(world_path, "canon_timeline.json")
@@ -114,9 +131,7 @@ def chapter_start(world_name: str, req: ChapterStartRequest):
 
 @router.post("/worlds/{world_name}/chapter/generate-prelude")
 def chapter_generate_prelude(world_name: str):
-    world_path = world_path_of(world_name)
-    if not os.path.isdir(world_path):
-        raise HTTPException(status_code=404, detail="World not found")
+    world_path = require_world(world_name)
     chapters_data = read_world_file(world_path, "chapters.json")
     existing_prelude = [c for c in chapters_data.get("chapters", []) if c.get("chapter_index") == 0]
     if existing_prelude:
@@ -126,6 +141,7 @@ def chapter_generate_prelude(world_name: str):
         )
     try:
         result = _generate_prelude(world_name)
+        bump_world_revision(world_path)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -133,15 +149,14 @@ def chapter_generate_prelude(world_name: str):
 
 @router.post("/worlds/{world_name}/chapter/regenerate-prelude")
 def chapter_regenerate_prelude(world_name: str):
-    world_path = world_path_of(world_name)
-    if not os.path.isdir(world_path):
-        raise HTTPException(status_code=404, detail="World not found")
+    world_path = require_world(world_name)
     chapters_data = read_world_file(world_path, "chapters.json")
     chapters = chapters_data.get("chapters", [])
     chapters[:] = [c for c in chapters if c.get("chapter_index") != 0]
     write_world_file(world_path, "chapters.json", chapters_data)
     try:
         result = _generate_prelude(world_name)
+        bump_world_revision(world_path)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -149,9 +164,7 @@ def chapter_regenerate_prelude(world_name: str):
 
 @router.post("/worlds/{world_name}/chapter/confirm-prelude")
 def chapter_confirm_prelude(world_name: str):
-    world_path = world_path_of(world_name)
-    if not os.path.isdir(world_path):
-        raise HTTPException(status_code=404, detail="World not found")
+    world_path = require_world(world_name)
     chapters_data = read_world_file(world_path, "chapters.json")
     prelude_exists = any(c.get("chapter_index") == 0 for c in chapters_data.get("chapters", []))
     if not prelude_exists:
@@ -198,11 +211,12 @@ def chapter_confirm_prelude(world_name: str):
                             write_world_file(world_path, "card_registry.json", card_registry)
 
     write_world_file(world_path, "world_config.json", world_config)
+    bump_world_revision(world_path)
     return {"status": "prelude_confirmed"}
 
 
 @router.post("/worlds/{world_name}/chapter/regenerate")
-def chapter_regenerate(world_name: str):
+def chapter_regenerate(world_name: str, req: RegenerateRequest = None):
     world_path = require_world(world_name)
     chapters_data = read_world_file(world_path, "chapters.json")
     turns = chapters_data.get("chapters", [])
@@ -213,24 +227,21 @@ def chapter_regenerate(world_name: str):
             detail="Khong co turn nao de regenerate. World chua co chapter nao."
         )
 
-    last_turn = turns[-1]
-    original_input = last_turn.get("user_input", "")
+    original_input = turns[-1].get("user_input", "")
+    request_id = req.request_id if req else None
+    expected_revision = req.expected_revision if req else None
 
-    if last_turn.get("chapter_closed"):
-        closed_chapter_idx = last_turn.get("chapter_index", 0)
-        turns_before = [t for t in turns if t.get("chapter_index", 0) < closed_chapter_idx]
-        chapters_data["chapters"] = turns_before
-        if turns_before:
-            pass
-        else:
-            chapters_data["running_summary"] = ""
-            chapters_data["memorable_beats"] = []
-    else:
-        chapters_data["chapters"] = turns[:-1]
-
-    write_world_file(world_path, "chapters.json", chapters_data)
-
-    return _generate_chapter(world_name, narrator_input=original_input, display_input=original_input)
+    # The last turn is removed inside _generate_chapter so nothing is written
+    # before the new turn commits (a blocked/failed regenerate leaves the old
+    # turn intact).
+    return _generate_chapter(
+        world_name,
+        narrator_input=original_input,
+        display_input=original_input,
+        request_id=request_id,
+        expected_revision=expected_revision,
+        regenerate=True,
+    )
 
 
 @router.get("/worlds/{world_name}/chapters")
@@ -264,6 +275,9 @@ def get_play_state(world_name: str):
     protagonist_data = None
     if protagonist_id and protagonist_id in character_state.get("characters", {}):
         p = character_state["characters"][protagonist_id]
+        from app.story.knowledge import project_knowledge_for_subject
+        from app.storage import read_world_canon
+        canon_facts = read_world_canon(world_path).get("facts", [])
         protagonist_data = {
             "id": protagonist_id,
             "name": p.get("name", protagonist_id),
@@ -271,6 +285,9 @@ def get_play_state(world_name: str):
             "power_stat": p.get("power_stat", {}),
             "traits": p.get("traits", {}),
             "knowledge_flags": p.get("knowledge_flags", []),
+            "knowledge": project_knowledge_for_subject(
+                character_state["characters"], protagonist_id, canon_facts
+            ),
             "alive": p.get("alive", True),
             "relationships": p.get("relationships", {}),
             "age": p.get("age", "")
@@ -316,6 +333,11 @@ def get_play_state(world_name: str):
         "story_clock": story_clock,
         "foreshadowing_tracker": foreshadowing_tracker,
         "foreshadowings": foreshadowing_tracker,
+        "output_length": world_config.get("output_length", "Standard"),
+        "revision": int(world_config.get("revision", 0) or 0),
+        "lifecycle_status": world_config.get("lifecycle_status", "active"),
+        "story_mode": world_config.get("story_mode", "endless"),
+        "epilogue": _read_epilogue(world_path),
         "style_card": get_world_style_card(world_name)
     }
 
@@ -400,6 +422,7 @@ def rewrite_chapter(world_name: str, req: RewriteChapterRequest):
                 t["chapter_text"] = rewritten_text
 
         write_world_file(world_path, "chapters.json", chapters_data)
+        bump_world_revision(world_path)
         return {"message": "success", "rewritten_text": rewritten_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -543,6 +566,7 @@ def generate_epilogue(world_name: str, req: dict):
             "chapters.json": chapters_data,
             "world_config.json": world_config,
         })
+        bump_world_revision(world_path)
 
         return {"epilogue": epilogue, "lifecycle_status": "completed"}
     except HTTPException:

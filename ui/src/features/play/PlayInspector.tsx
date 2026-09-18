@@ -1,11 +1,15 @@
+import { lazy, Suspense } from 'react';
 import type { PlaySession } from './usePlaySession';
-import { BoltIcon, BookOpenIcon, BriefcaseIcon, EyeIcon, FireIcon, MapIcon, UserIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { BoltIcon, BookOpenIcon, BriefcaseIcon, EyeIcon, FireIcon, FlagIcon, MapIcon, NewspaperIcon, UserIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { LocationMap } from '../../components/LocationMap';
-import { CodexGraph } from '../../components/CodexGraph';
 
-type Props = Pick<PlaySession, 'playState' | 'activeDrawer' | 'setActiveDrawer' | 'locations' | 'affinityGraph' | 'protagonist'>;
+// The affinity graph pulls in a heavy graph library; load it only when the
+// Codex drawer is opened.
+const CodexGraph = lazy(() => import('../../components/CodexGraph').then((m) => ({ default: m.CodexGraph })));
 
-export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locations, affinityGraph, protagonist }: Props) {
+type Props = Pick<PlaySession, 'playState' | 'activeDrawer' | 'setActiveDrawer' | 'locations' | 'affinityGraph' | 'protagonist' | 'quests' | 'journal'>;
+
+export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locations, affinityGraph, protagonist, quests, journal }: Props) {
   return (<>
       {/* RIGHT ICON STRIP & SLIDE-IN DRAWERS */}
       <div className="flex z-20 h-full shrink-0">
@@ -20,6 +24,8 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
                 {activeDrawer === 'status' && <UserIcon   className="w-5 h-5 text-[var(--ok)]" />}
                 {activeDrawer === 'skills' && <BoltIcon   className="w-5 h-5 text-[var(--warn)]" />}
                 {activeDrawer === 'foreshadowing' && <EyeIcon   className="w-5 h-5 text-[var(--danger)]" />}
+                {activeDrawer === 'quests' && <FlagIcon   className="w-5 h-5 text-[var(--accent-sage)]" />}
+                {activeDrawer === 'journal' && <NewspaperIcon   className="w-5 h-5 text-[var(--ink-soft)]" />}
                 <span>{activeDrawer}</span>
               </h3>
               <button
@@ -61,7 +67,9 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
               {activeDrawer === 'codex' && (
                 <div className="space-y-6">
                   <div className="h-64 rounded-2xl border-2 border-[var(--line)] overflow-hidden shadow-inner bg-[var(--bg-surface)]">
-                    <CodexGraph nodes={affinityGraph.nodes} edges={affinityGraph.edges} />
+                    <Suspense fallback={<div className="h-full flex items-center justify-center text-xs text-[var(--ink-soft)]">Loading graph…</div>}>
+                      <CodexGraph nodes={affinityGraph.nodes} edges={affinityGraph.edges} />
+                    </Suspense>
                   </div>
 
                   <div className="space-y-3">
@@ -137,6 +145,53 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
                   )}
                 </div>
               )}
+
+              {/* 7. Quest Board */}
+              {activeDrawer === 'quests' && (
+                <div className="space-y-3">
+                  {quests.length === 0 ? (
+                    <p className="text-xs font-bold text-[var(--ink-soft)] text-center py-6">No quests discovered yet.</p>
+                  ) : (
+                    quests.map((q: any) => (
+                      <div key={q.quest_id} className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--line)] shadow-sm space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[14px] font-bold text-[var(--ink-main)] font-[var(--font-display)]">{q.title}</span>
+                          <span className="px-2 py-0.5 rounded-full font-mono text-[10px] font-bold bg-[var(--bg-subtle)] text-[var(--accent-sage)] border border-[var(--line)]">{q.status}</span>
+                        </div>
+                        {q.hint && <p className="text-[13px] text-[var(--ink-soft)] font-medium leading-relaxed">{q.hint}</p>}
+                        <p className="text-[11px] font-mono text-[var(--ink-faint)]">
+                          {q.location_hint ? `📍 ${q.location_hint} · ` : ''}
+                          {q.deadline_tick !== null && q.deadline_tick !== undefined ? `deadline tick ${q.deadline_tick} · ` : ''}
+                          known: {q.source?.kind || 'unknown'}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* 8. Consequence Journal */}
+              {activeDrawer === 'journal' && (
+                <div className="space-y-3">
+                  {journal.length === 0 ? (
+                    <p className="text-xs font-bold text-[var(--ink-soft)] text-center py-6">Nothing has happened that you know of yet.</p>
+                  ) : (
+                    journal.map((entry: any) => (
+                      <div key={entry.quest_id} className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--line)] shadow-sm space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[14px] font-bold text-[var(--ink-main)] font-[var(--font-display)]">{entry.title}</span>
+                          <span className="px-2 py-0.5 rounded-full font-mono text-[10px] font-bold bg-[var(--bg-subtle)] text-[var(--ink-soft)] border border-[var(--line)]">{entry.status}</span>
+                        </div>
+                        {entry.hint && <p className="text-[13px] text-[var(--ink-soft)] font-medium leading-relaxed">{entry.hint}</p>}
+                        <p className="text-[11px] font-mono text-[var(--ink-faint)]">
+                          tick {entry.discovered_at_tick ?? '?'} · via {entry.source?.kind || 'unknown'}
+                          {entry.resolution ? ` · ${entry.resolution}` : ''}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -201,6 +256,26 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
             }`}
           >
             <EyeIcon className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={() => setActiveDrawer(activeDrawer === 'quests' ? null : 'quests')}
+            title="Quest Board"
+            className={`p-2.5 rounded-2xl transition-all ${
+              activeDrawer === 'quests' ? 'bg-[var(--bg-subtle)] text-[var(--periwinkle-dark)] border border-[var(--line-2)] shadow-sm' : 'text-[var(--ink-main)]/70 hover:text-[var(--ink-main)] hover:bg-[var(--bg-subtle)] border border-transparent'
+            }`}
+          >
+            <FlagIcon className="w-5 h-5" />
+          </button>
+
+          <button
+            onClick={() => setActiveDrawer(activeDrawer === 'journal' ? null : 'journal')}
+            title="Consequence Journal"
+            className={`p-2.5 rounded-2xl transition-all ${
+              activeDrawer === 'journal' ? 'bg-[var(--bg-subtle)] text-[var(--periwinkle-dark)] border border-[var(--line-2)] shadow-sm' : 'text-[var(--ink-main)]/70 hover:text-[var(--ink-main)] hover:bg-[var(--bg-subtle)] border border-transparent'
+            }`}
+          >
+            <NewspaperIcon className="w-5 h-5" />
           </button>
         </div>
       </div>

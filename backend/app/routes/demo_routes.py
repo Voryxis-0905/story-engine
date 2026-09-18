@@ -4,6 +4,7 @@ import os
 
 from app.storage import world_path_of, write_world_file, _validate_world_name
 from app.engine import DEFAULT_STORY_CLOCK, make_card, make_checkpoint, make_character
+from app.world.templates import SCHEMA_VERSION
 
 try:
     from skill_limiter import check_skill_limiter
@@ -27,6 +28,9 @@ def seed_demo(world_name: str, overwrite: bool = False):
         os.makedirs(world_path)
 
     world_config = {
+        "schema_version": SCHEMA_VERSION,
+        "revision": 0,
+        "pre_turn_snapshot": None,
         "display_name": "Nine Heavens Realm",
         "genre": "xianxia / cultivation",
         "power_system": "Realm: Qi Condensation -> Foundation Establishment -> Core Formation -> Nascent Soul -> Deity Transformation",

@@ -16,6 +16,9 @@ except ImportError:
     cross_check = None
     CommitValidationError = None
 
+from app.world.templates import STYLE_CARD_TEMPLATE
+from app.world.schema import CORE_STATE_FILES
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.abspath(os.environ.get("STORY_ENGINE_DATA_DIR") or os.path.join(BASE_DIR, "data"))
@@ -268,6 +271,8 @@ def _sanitize_and_preserve_fallback_chain(new_chain: list, existing_chain: list)
 
 def _sanitize_fallback_chain_for_status(chain: list) -> list:
     status_chain = []
+    if not isinstance(chain, list):
+        return status_chain
     for item in chain:
         if isinstance(item, dict):
             key = item.get("api_key", "")
@@ -279,6 +284,31 @@ def _sanitize_fallback_chain_for_status(chain: list) -> list:
                 "base_url": item.get("base_url", "")
             })
     return status_chain
+
+
+def redact_runtime_override_for_export(override: dict) -> dict:
+    """Return a copy of a world runtime override without any secret material.
+
+    Runtime keys are machine-local secrets and must never travel inside export
+    packages or import payloads. Non-secret fields are kept so an exported world
+    still carries its model/provider preferences.
+    """
+    if not isinstance(override, dict):
+        return {}
+    redacted = {k: v for k, v in override.items() if k not in ("openrouter_api_key", "openrouter_model")}
+    redacted["openrouter_api_key"] = ""
+    if isinstance(override.get("openrouter_model"), str):
+        redacted["openrouter_model"] = override["openrouter_model"]
+    chain = override.get("fallback_chain")
+    if isinstance(chain, list):
+        safe_chain = []
+        for item in chain:
+            if isinstance(item, dict):
+                node = dict(item)
+                node["api_key"] = ""
+                safe_chain.append(node)
+        redacted["fallback_chain"] = safe_chain
+    return redacted
 
 
 def _compute_role_assignments_effective(world_name: str = None) -> dict:
@@ -329,7 +359,6 @@ def build_runtime_config_status(world_name: str = None) -> dict:
 
     return {
         "llm_provider": cfg.get("llm_provider", "openrouter"),
-        "api_key": effective_key,
         "model_name": get_effective_model(world_name),
         "base_url": cfg.get("base_url", ""),
         "temperature": cfg.get("temperature", 0.7),
@@ -365,6 +394,29 @@ def world_path_of(world_name: str) -> str:
     return os.path.join(WORLDS_DIR, world_name)
 
 
+def bump_world_revision(world_path: str) -> int:
+    """Increment and persist the world revision after a state-changing write."""
+    from app.action_guard import bump_revision
+    cfg = read_world_file(world_path, "world_config.json")
+    new_revision = bump_revision(cfg)
+    write_world_file(world_path, "world_config.json", cfg)
+    return new_revision
+
+
+def mark_builder_manual(world_path: str, step: str) -> None:
+    """Remember that a builder step was edited by hand (do not auto-overwrite)."""
+    cfg = read_world_file(world_path, "world_config.json")
+    builder = cfg.setdefault("builder", {})
+    if not isinstance(builder, dict):
+        cfg["builder"] = builder = {}
+    manual = builder.setdefault("manual_steps", [])
+    if not isinstance(manual, list):
+        builder["manual_steps"] = manual = []
+    if step not in manual:
+        manual.append(step)
+        write_world_file(world_path, "world_config.json", cfg)
+
+
 def write_world_file(world_path: str, filename: str, data: dict):
     filepath = os.path.join(world_path, filename)
     if atomic_write is not None:
@@ -390,6 +442,25 @@ def _validate_world_name(world_name: str):
 
 
 def require_world(world_name: str) -> str:
+    """Validate and bring a world to the current schema before it is used.
+
+    Every read/write route that interprets world state goes through here, so an
+    incompatible (newer) world is rejected before any state is read or written.
+    Old worlds are migrated with a backup.
+    """
+    world_path = require_world_raw(world_name)
+    from app.persistence import recover_world
+    recover_world(world_path)
+    from app.world.schema import ensure_current_schema, SchemaVersionError
+    try:
+        ensure_current_schema(world_path)
+    except SchemaVersionError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    return world_path
+
+
+def require_world_raw(world_name: str) -> str:
+    """Name/dir check only, without touching schema. For raw export/recovery."""
     _validate_world_name(world_name)
     world_path = world_path_of(world_name)
     if not os.path.isdir(world_path):
@@ -418,13 +489,49 @@ def write_saves_index(world_path: str, saves: list):
         json.dump({"saves": saves}, f, ensure_ascii=False, indent=2)
 
 
-def snapshot_world_state(world_path: str, save_id: str, templates: dict):
+def snapshot_world_state(world_path: str, save_id: str, templates: dict = None):
+    if templates is None:
+        templates = CORE_STATE_FILES
     dest_dir = os.path.join(world_path, "saves", save_id)
     os.makedirs(dest_dir, exist_ok=True)
     for filename in templates.keys():
         src = os.path.join(world_path, filename)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(dest_dir, filename))
+
+
+TURN_SNAPSHOT_DIRNAME = "turn_snapshots"
+
+
+def turn_snapshot_dir(world_path: str) -> str:
+    return os.path.join(world_path, TURN_SNAPSHOT_DIRNAME, "latest")
+
+
+def latest_turn_snapshot_dir(world_path: str):
+    """Return the pre-turn snapshot for the most recent turn, if any."""
+    path = turn_snapshot_dir(world_path)
+    return path if os.path.isdir(path) else None
+
+
+def create_turn_snapshot(world_path: str) -> str:
+    """Copy the current (pre-turn) world state. Keeps only the latest snapshot."""
+    dest_dir = turn_snapshot_dir(world_path)
+    parent = os.path.dirname(dest_dir)
+    if os.path.isdir(parent):
+        shutil.rmtree(parent)
+    os.makedirs(dest_dir)
+    for filename in CORE_STATE_FILES:
+        src = os.path.join(world_path, filename)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(dest_dir, filename))
+    return dest_dir
+
+
+def clear_turn_snapshots(world_path: str) -> None:
+    parent = os.path.dirname(turn_snapshot_dir(world_path))
+    if os.path.isdir(parent):
+        shutil.rmtree(parent)
+
 
 
 def build_save_entry(world_path: str, save_id: str, label: str, source: str) -> dict:
@@ -494,15 +601,7 @@ def write_branch_delta(world_path: str, data: dict):
 
 
 def get_world_style_card(world_name: str) -> dict:
-    default_style = {
-        "perspective": "third_person_limited",
-        "voice": "narrative",
-        "pacing": "moderate",
-        "tone": "balanced",
-        "prose_guidelines": [],
-        "taboo_words": [],
-        "custom_instructions": ""
-    }
+    default_style = dict(STYLE_CARD_TEMPLATE)
     if not world_name:
         return default_style
     world_path = world_path_of(world_name)

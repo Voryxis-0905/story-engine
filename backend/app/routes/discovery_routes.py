@@ -3,6 +3,7 @@ from fastapi import APIRouter
 
 from app.storage import require_world, read_world_file
 from app.checkpoint_engine import check_map_based_restrictions
+from app.story.views import player_character_view
 
 try:
     from skill_limiter import check_skill_limiter
@@ -16,13 +17,21 @@ router = APIRouter()
 @router.get("/worlds/{world_name}/codex")
 def get_world_codex(world_name: str):
     world_path = require_world(world_name)
-    cards = read_world_file(world_path, "card_registry.json")
-    chars = read_world_file(world_path, "character_state.json")
+    card_registry = read_world_file(world_path, "card_registry.json")
+    character_state = read_world_file(world_path, "character_state.json")
+    world_config = read_world_file(world_path, "world_config.json")
 
-    unlocked_cards = [c for c in cards if c.get("status") == "unlocked"]
+    cards = card_registry.get("cards", []) if isinstance(card_registry, dict) else []
+    unlocked_cards = [
+        card for card in cards
+        if isinstance(card, dict) and card.get("status") == "unlocked"
+    ]
+    characters = character_state.get("characters", {}) if isinstance(character_state, dict) else {}
     return {
         "cards": unlocked_cards,
-        "characters": chars
+        "characters": player_character_view(
+            characters, world_config.get("protagonist_id", "")
+        )
     }
 
 
@@ -88,11 +97,13 @@ def get_world_location_map_status(world_name: str):
 
 @router.get("/worlds/{world_name}/quest_board")
 def get_quest_board(world_name: str):
-    """
-    Return active quests for the world if quest_board_enabled is true.
-    Quests are derived from world_events.json pending events that are either:
-    - discoverable_from_start: true, OR
-    - event_id appears in open_threads
+    """Player's quest view derived from explicit discovery records.
+
+    A quest appears only for events the player has discovered, and its status
+    follows the event lifecycle (active/completed/prevented/transformed/missed).
+    A deadline is shown only when it was recorded at discovery time — never
+    inferred from an arbitrary trigger condition. Editing free-text notes cannot
+    lose a quest once it is recorded.
     """
     world_path = require_world(world_name)
     world_config = read_world_file(world_path, "world_config.json")
@@ -100,58 +111,43 @@ def get_quest_board(world_name: str):
     if not world_config.get("quest_board_enabled", False):
         return {"quests": [], "enabled": False}
 
-    # Load world_events
     from app.world_events import load_world_events
-    world_events = load_world_events(world_path)
-    events = world_events.get("events", [])
+    from app.story.discovery import (
+        load_discoveries, save_discoveries, ensure_start_discoveries,
+        backfill_from_threads, quest_view,
+    )
 
-    open_threads = world_config.get("open_threads", [])
-    # Flatten open_threads notes into a set for quick lookup
-    thread_texts = set()
-    for thread in open_threads:
-        if isinstance(thread, dict):
-            note = thread.get("note", "")
-            if note:
-                thread_texts.add(note.lower())
-        elif isinstance(thread, str):
-            thread_texts.add(thread.lower())
+    events = load_world_events(world_path).get("events", [])
+    tick = world_config.get("story_clock", {}).get("tick", 0)
+    store = load_discoveries(world_path)
+    changed = ensure_start_discoveries(store, events, tick)
+    changed |= backfill_from_threads(store, events, world_config.get("open_threads", []), tick)
+    if changed:
+        save_discoveries(world_path, store)
 
-    quests = []
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        if event.get("status") != "pending":
-            continue
+    return {"quests": quest_view(events, store), "enabled": True}
 
-        event_id = event.get("event_id", "")
-        discoverable = event.get("discoverable_from_start", False)
 
-        # Check if event is known via open_threads
-        event_in_threads = False
-        if event_id:
-            for thread_text in thread_texts:
-                if event_id.lower() in thread_text or event_id in thread_text:
-                    event_in_threads = True
-                    break
-
-        if not discoverable and not event_in_threads:
-            continue
-
-        # Build quest entry
-        trigger_conditions = event.get("trigger_conditions", [])
-        deadline_tick = None
-        for cond in trigger_conditions:
-            if isinstance(cond, dict) and cond.get("field") == "story_clock.tick":
-                deadline_tick = cond.get("value")
-                break
-
-        quests.append({
-            "quest_id": event_id,
-            "title": event.get("quest_hint_title") or event.get("title", "Unknown Quest"),
-            "hint": event.get("quest_hint_text") or "",
-            "location_hint": event.get("location_hint"),
-            "deadline_tick": deadline_tick,
-            "discoverable_from_start": discoverable,
-        })
-
-    return {"quests": quests, "enabled": True}
+@router.get("/worlds/{world_name}/journal")
+def get_journal(world_name: str):
+    """Consequence journal: every event the player has learned about, with the
+    source and tick it was learned, and its current lifecycle status. Unlike the
+    quest board this is not gated by quest_board_enabled, and it records events
+    the player did not choose directly when they learned about them.
+    """
+    world_path = require_world(world_name)
+    world_config = read_world_file(world_path, "world_config.json")
+    from app.world_events import load_world_events
+    from app.story.discovery import (
+        load_discoveries, save_discoveries, ensure_start_discoveries,
+        backfill_from_threads, quest_view,
+    )
+    events = load_world_events(world_path).get("events", [])
+    tick = world_config.get("story_clock", {}).get("tick", 0)
+    store = load_discoveries(world_path)
+    changed = ensure_start_discoveries(store, events, tick)
+    changed |= backfill_from_threads(store, events, world_config.get("open_threads", []), tick)
+    if changed:
+        save_discoveries(world_path, store)
+    entries = sorted(quest_view(events, store), key=lambda q: q.get("discovered_at_tick") or 0, reverse=True)
+    return {"entries": entries}

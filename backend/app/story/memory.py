@@ -55,11 +55,56 @@ def _filter_memorable_beats_by_token_budget(beats: list, max_tokens: int,
     return result
 
 
+def _trim_context_to_budget(multi_tier: dict, max_tokens: int) -> None:
+    """Drop least-important context first until the estimate fits the budget.
+
+    Order: memorable beats, then canon facts, then older working-memory turns.
+    Summaries are never dropped (they are the compressed long-term memory).
+    """
+    if not max_tokens or max_tokens <= 0:
+        return
+
+    def estimate():
+        return estimate_tokens(json.dumps(multi_tier, ensure_ascii=False))
+
+    while estimate() > max_tokens:
+        beats = multi_tier.get("tier_2_memorable_beats", {}).get("beats", [])
+        if beats:
+            beats.pop()
+            continue
+        facts = multi_tier.get("tier_3_canon_filter", {}).get("relevant_canon_facts", [])
+        if facts:
+            facts.pop()
+            sources = multi_tier.get("tier_3_canon_filter", {}).get("relevant_canon_sources")
+            if isinstance(sources, dict) and sources:
+                sources.pop(next(reversed(sources)))
+            continue
+        sources = multi_tier.get("tier_3_canon_filter", {}).get("relevant_canon_sources")
+        if isinstance(sources, dict) and sources:
+            sources.pop(next(reversed(sources)))
+            continue
+        recent = multi_tier.get("tier_1_working_memory", {}).get("recent_turns", [])
+        if len(recent) > 1:
+            recent.pop(0)
+            continue
+        # Instructional descriptions are not memory; drop them before giving up.
+        dropped_description = False
+        for tier in multi_tier.values():
+            if isinstance(tier, dict) and "description" in tier:
+                tier.pop("description")
+                dropped_description = True
+                break
+        if dropped_description:
+            continue
+        break
+
+
 def build_multi_tier_context(
     chapters_data: dict,
     world_config: dict,
     checkpoint: dict,
     canon_facts: list,
+    max_context_tokens: int = None,
 ) -> dict:
     allowed_locations = set(
         loc.lower() for loc in checkpoint.get("boundary", {}).get("locations", [])
@@ -76,6 +121,7 @@ def build_multi_tier_context(
         return False
 
     filtered_facts = []
+    relevant_canon_sources = {}
     for f in canon_facts:
         if isinstance(f, str):
             filtered_facts.append(f)
@@ -84,6 +130,13 @@ def build_multi_tier_context(
             tags = [t.lower() for t in f.get("tags", [])]
             if not scene_anchors or any(_tag_in_allowed_zones(t) for t in tags):
                 filtered_facts.append(statement)
+                if f.get("fact_id"):
+                    relevant_canon_sources[f["fact_id"]] = {
+                        "statement": statement,
+                        "source": f.get("source"),
+                        "event_id": f.get("event_id"),
+                        "tick": f.get("tick"),
+                    }
 
     threads = []
     for t in world_config.get("open_threads", []):
@@ -100,7 +153,7 @@ def build_multi_tier_context(
 
     pacing_config = get_pacing_context_config(world_config.get("pacing_level", "Balanced"))
 
-    return {
+    context = {
         "multi_tier_context": {
             "tier_1_working_memory": {
                 "description": "Full text of the most recent turns (immediate scene context). Prioritize this for what is happening right now.",
@@ -125,6 +178,7 @@ def build_multi_tier_context(
                 "allowed_locations": list(allowed_locations),
                 "allowed_characters": list(allowed_chars),
                 "relevant_canon_facts": filtered_facts,
+                "relevant_canon_sources": relevant_canon_sources,
             },
             "tier_4_thread_ledger": {
                 "description": "Active narrative threads and foreshadowing hints awaiting resolution. Advance or resolve threads within their deadlines.",
@@ -134,6 +188,15 @@ def build_multi_tier_context(
             },
         }
     }
+
+    budget = max_context_tokens if max_context_tokens is not None else world_config.get("context_max_tokens")
+    if budget:
+        _trim_context_to_budget(context["multi_tier_context"], int(budget))
+    context["context_token_estimate"] = estimate_tokens(
+        json.dumps(context["multi_tier_context"], ensure_ascii=False)
+    )
+    context["context_token_budget"] = int(budget) if budget else None
+    return context
 
 
 def _is_rolled(c: dict) -> bool:

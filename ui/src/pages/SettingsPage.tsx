@@ -12,6 +12,9 @@ export const SettingsPage: React.FC = () => {
   // Form states
   const [provider, setProvider] = useState('openrouter');
   const [apiKey, setApiKey] = useState('');
+  const [apiKeyMasked, setApiKeyMasked] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [keySource, setKeySource] = useState('none');
   const [modelName, setModelName] = useState('deepseek/deepseek-chat');
   const [baseUrl, setBaseUrl] = useState('');
   const [temperature, setTemperature] = useState(0.7);
@@ -30,7 +33,12 @@ export const SettingsPage: React.FC = () => {
       const cfg = await api.config.get();
       if (cfg) {
         setProvider(cfg.llm_provider || 'openrouter');
-        setApiKey(cfg.api_key || cfg.api_key_masked || '');
+        // The backend never returns the raw key; keep the input empty and show
+        // the masked value as a hint instead.
+        setApiKey('');
+        setApiKeyMasked(cfg.api_key_masked ?? null);
+        setHasApiKey(Boolean(cfg.has_api_key));
+        setKeySource(cfg.api_key_source || 'none');
         setModelName(cfg.model_name || cfg.model || 'deepseek/deepseek-chat');
         setBaseUrl(cfg.base_url || '');
         setTemperature(cfg.temperature ?? 0.7);
@@ -42,18 +50,29 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const buildConfigPayload = () => {
+    const trimmedKey = apiKey.trim();
+    return {
+      llm_provider: provider,
+      model_name: modelName,
+      base_url: baseUrl,
+      temperature,
+      ...(trimmedKey
+        ? { api_key: trimmedKey, api_key_action: 'replace' as const }
+        : { api_key_action: 'keep' as const }),
+    };
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setSaveSuccess(false);
     try {
-      await api.config.update({
-        llm_provider: provider,
-        api_key: apiKey,
-        model_name: modelName,
-        base_url: baseUrl,
-        temperature,
-      });
+      const status = await api.config.update(buildConfigPayload());
+      setApiKey('');
+      setApiKeyMasked(status?.api_key_masked ?? null);
+      setHasApiKey(Boolean(status?.has_api_key));
+      setKeySource(status?.api_key_source || 'none');
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
@@ -63,22 +82,27 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
+  const handleClearApiKey = async () => {
+    setLoading(true);
+    setSaveSuccess(false);
+    try {
+      const status = await api.config.update({ ...buildConfigPayload(), api_key_action: 'delete' });
+      setApiKey('');
+      setApiKeyMasked(status?.api_key_masked ?? null);
+      setHasApiKey(Boolean(status?.has_api_key));
+      setKeySource(status?.api_key_source || 'none');
+    } catch (err: any) {
+      alert(`Clear failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
     try {
-      // Read current values directly from DOM inputs if available to avoid any React batch state lag
-      const keyEl = document.querySelector('input[type="password"]') as HTMLInputElement | null;
-      const effectiveKey = keyEl && keyEl.value ? keyEl.value.trim() : apiKey;
-
-      await api.config.update({
-        llm_provider: provider,
-        api_key: effectiveKey,
-        model_name: modelName,
-        base_url: baseUrl,
-        temperature,
-      });
-
+      await api.config.update(buildConfigPayload());
       const res = await api.config.testConnection();
       setTestResult({
         status: res.ok || res.status === 'ok' ? 'ok' : 'error',
@@ -196,9 +220,15 @@ export const SettingsPage: React.FC = () => {
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-..."
+                    placeholder={hasApiKey ? `Stored (${apiKeyMasked || 'set'}) — leave blank to keep` : 'sk-...'}
+                    autoComplete="new-password"
                     className="w-full px-5 py-3.5 rounded-2xl bg-[var(--bg-subtle)] border-2 border-transparent text-[var(--ink-main)] font-medium text-[14px] font-mono focus:outline-none focus:border-[var(--periwinkle)] transition-colors placeholder:text-[var(--ink-faint)] focus:bg-[var(--bg-subtle)]"
                   />
+                  <p className="mt-2 text-xs text-[var(--ink-faint)] font-mono">
+                    {hasApiKey
+                      ? `Key stored (source: ${keySource}). Leave blank to keep it, or type a new key to replace it.`
+                      : 'No key stored yet.'}
+                  </p>
                 </div>
 
                 <div>
@@ -251,15 +281,28 @@ export const SettingsPage: React.FC = () => {
               </div>
 
               <div className="pt-6 border-t border-[var(--line)] flex flex-wrap items-center justify-between gap-4">
-                <button
-                  type="button"
-                  onClick={handleTestConnection}
-                  disabled={testing}
-                  className="pill-btn pill-btn-secondary px-6 py-3 text-[14px] flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm"
-                >
-                  {testing ? <ArrowPathIcon className="w-5 h-5 animate-spin text-[var(--periwinkle-dark)]" /> : <ShieldCheckIcon className="w-5 h-5 text-[var(--ok)]" />}
-                  <span>Test Connection</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={testing}
+                    className="pill-btn pill-btn-secondary px-6 py-3 text-[14px] flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm"
+                  >
+                    {testing ? <ArrowPathIcon className="w-5 h-5 animate-spin text-[var(--periwinkle-dark)]" /> : <ShieldCheckIcon className="w-5 h-5 text-[var(--ok)]" />}
+                    <span>Test Connection</span>
+                  </button>
+
+                  {hasApiKey && (
+                    <button
+                      type="button"
+                      onClick={handleClearApiKey}
+                      disabled={loading || testing}
+                      className="pill-btn pill-btn-secondary px-6 py-3 text-[14px] flex items-center justify-center gap-2 disabled:opacity-50 shadow-sm text-[var(--danger)]"
+                    >
+                      <span>Clear Stored Key</span>
+                    </button>
+                  )}
+                </div>
 
                 <button
                   type="submit"

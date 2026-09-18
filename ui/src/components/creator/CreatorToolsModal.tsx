@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { XMarkIcon, DocumentArrowDownIcon, SwatchIcon, TagIcon, BookOpenIcon, ArrowDownTrayIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { api } from '../../api/client';
+import { WORLD_RESTORED_EVENT } from '../../features/play/types';
 
 interface CreatorToolsModalProps {
   worldName: string;
@@ -31,13 +32,7 @@ export const CreatorToolsModal: React.FC<CreatorToolsModalProps> = ({ worldName,
   // Export state
   const [exportData, setExportData] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen && worldName) {
-      loadTabData();
-    }
-  }, [isOpen, worldName, activeTab]);
-
-  const loadTabData = async () => {
+  const loadTabData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -62,7 +57,13 @@ export const CreatorToolsModal: React.FC<CreatorToolsModalProps> = ({ worldName,
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeTab, worldName]);
+
+  useEffect(() => {
+    if (isOpen && worldName) {
+      loadTabData();
+    }
+  }, [isOpen, worldName, loadTabData]);
 
   const handleCreateSave = async () => {
     if (!saveLabel.trim()) return;
@@ -83,6 +84,7 @@ export const CreatorToolsModal: React.FC<CreatorToolsModalProps> = ({ worldName,
     setLoading(true);
     try {
       await api.creator.saves.restore(worldName, saveId);
+      window.dispatchEvent(new CustomEvent(WORLD_RESTORED_EVENT, { detail: { worldName } }));
       alert('Save restored successfully!');
       onClose();
     } catch (e: any) {

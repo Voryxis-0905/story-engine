@@ -4,10 +4,13 @@ import json
 import re
 import time
 import shutil
+from html import escape as html_escape
 
-from app.storage import WORLDS_DIR, read_world_runtime_override, write_world_runtime_override, require_world, world_path_of, read_world_file, write_world_file, read_saves_index, write_world_style_card, _validate_world_name
+from app.storage import WORLDS_DIR, read_world_runtime_override, write_world_runtime_override, require_world, require_world_raw, world_path_of, read_world_file, write_world_file, read_saves_index, write_world_style_card, _validate_world_name, redact_runtime_override_for_export, bump_world_revision, mark_builder_manual
 from app.engine import TEMPLATES, _validate_imported_package, detect_story_language
 from app.models import WorldConfigUpdate, WorldCreationRequest, ImportWorldRequest, ForkRequest
+from app.world.schema import CORE_STATE_FILES, read_schema_version, SchemaVersionError
+from app.world.templates import SCHEMA_VERSION
 
 try:
     from skill_limiter import check_skill_limiter
@@ -66,6 +69,8 @@ def update_world_config(world_name: str, req: WorldConfigUpdate):
             )
     world_config.update(updates)
     write_world_file(world_path, "world_config.json", world_config)
+    bump_world_revision(world_path)
+    mark_builder_manual(world_path, "skeleton")
     return {"message": "world_config updated", "world_config": world_config}
 
 
@@ -73,7 +78,7 @@ def update_world_config(world_name: str, req: WorldConfigUpdate):
 def get_world(world_name: str):
     world_path = require_world(world_name)
     result = {}
-    for filename in TEMPLATES.keys():
+    for filename in CORE_STATE_FILES.keys():
         file_path = os.path.join(world_path, filename)
         key = filename.replace(".json", "")
         if os.path.exists(file_path):
@@ -92,7 +97,19 @@ def delete_world(world_name: str):
 @router.post("/worlds/import")
 def import_world(req: ImportWorldRequest):
     pkg = req.package_data
+    declared_version = pkg.get("schema_version")
+    if declared_version is None and isinstance(pkg.get("world_config"), dict):
+        declared_version = pkg["world_config"].get("schema_version")
+    if isinstance(declared_version, int) and not isinstance(declared_version, bool) and declared_version > SCHEMA_VERSION:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Import package schema_version {declared_version} is newer than this app supports "
+                f"(max {SCHEMA_VERSION}). Update Story Engine before importing."
+            ),
+        )
     full_cfg, card_reg, timeline, char_state = _validate_imported_package(pkg, TEMPLATES)
+    full_cfg["schema_version"] = SCHEMA_VERSION
 
     raw_name = req.world_name or full_cfg.get("display_name") or "imported_world"
     target_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', raw_name).strip('_') or "imported_world"
@@ -152,9 +169,16 @@ def create_world(world_name: str, req: WorldCreationRequest = None):
 
 @router.get("/worlds/{world_name}/export")
 def export_world(world_name: str):
-    world_path = require_world(world_name)
+    # Raw read: export must work even for a world we cannot migrate, so it can be
+    # used as a recovery copy. It never writes or migrates in place.
+    world_path = require_world_raw(world_name)
+    try:
+        version = read_schema_version(world_path)
+    except SchemaVersionError as error:
+        raise HTTPException(status_code=400, detail=str(error))
     pkg = {
         "export_version": "1.0",
+        "schema_version": version,
         "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "world_config": read_world_file(world_path, "world_config.json"),
         "card_registry": read_world_file(world_path, "card_registry.json"),
@@ -164,7 +188,7 @@ def export_world(world_name: str):
 
     override = read_world_runtime_override(world_name)
     if override:
-        pkg["runtime_override"] = override
+        pkg["runtime_override"] = redact_runtime_override_for_export(override)
 
     style_card_path = os.path.join(world_path, "style_card.json")
     if os.path.isfile(style_card_path):
@@ -213,22 +237,25 @@ def fork_timeline_at_checkpoint(world_name: str, req: ForkRequest):
 
 @router.get("/worlds/{world_name}/export-story")
 def export_story_html(world_name: str):
-    world_path = require_world(world_name)
+    world_path = require_world_raw(world_name)
     chapters_data = read_world_file(world_path, "chapters.json")
     chapters = chapters_data.get("chapters", [])
     config = read_world_file(world_path, "world_config.json")
 
-    html_content = f"<html><head><meta charset='utf-8'><title>{config.get('display_name', world_name)}</title>"
+    display_name = html_escape(str(config.get("display_name", world_name)))
+    html_content = f"<html><head><meta charset='utf-8'><title>{display_name}</title>"
     html_content += "<style>body{font-family:serif; max-width:800px; margin:40px auto; line-height:1.6; color:#333; padding: 20px;} "
     html_content += ".chapter-title {text-align:center; margin-top:2em;} .user-input {font-style:italic; color:#666; margin-bottom:1em;}</style></head><body>"
-    html_content += f"<h1 style='text-align:center;'>{config.get('display_name', world_name)}</h1>"
+    html_content += f"<h1 style='text-align:center;'>{display_name}</h1>"
 
     for ch in chapters:
         if ch.get("chapter_title"):
-            html_content += f"<h2 class='chapter-title'>{ch['chapter_title']}</h2>"
+            title_text = html_escape(str(ch["chapter_title"]))
+            html_content += f"<h2 class='chapter-title'>{title_text}</h2>"
         if ch.get("user_input"):
-            html_content += f"<div class='user-input'>&gt; {ch['user_input']}</div>"
-        text = ch.get("chapter_text", "").replace("\n", "<br>")
+            user_input = html_escape(str(ch["user_input"]))
+            html_content += f"<div class='user-input'>&gt; {user_input}</div>"
+        text = html_escape(str(ch.get("chapter_text", ""))).replace("\n", "<br>")
         html_content += f"<p>{text}</p>"
         html_content += "<hr style='border:0; border-top:1px solid #eee; margin:2em 0;'>"
 

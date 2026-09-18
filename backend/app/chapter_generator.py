@@ -43,6 +43,8 @@ from app.story.memory import total_story_word_count
 from app.story.memory import update_running_summary
 from app.story.pacing import CHAPTER_HARD_CLOSE_TURNS
 from app.story.pacing import CHAPTER_SOFT_CLOSE_TURNS
+from app.story.observer import scene_participants
+from app.story.views import narrative_character_view
 from app.story.pacing import CHAPTER_SOFT_CLOSE_WORDS
 from app.story.pacing import CHAPTER_SUMMARY_BUDGET_CEIL
 from app.story.pacing import CHAPTER_SUMMARY_BUDGET_FLOOR
@@ -73,34 +75,84 @@ logger = logging.getLogger(__name__)
 
 
 @locked_world
-def _generate_chapter(world_name: str, narrator_input: str, display_input: str = None) -> dict:
+def _generate_chapter(world_name: str, narrator_input: str, display_input: str = None,
+                      request_id: str = None, expected_revision: int = None,
+                      regenerate: bool = False) -> dict:
     from app.storage import (
         world_path_of, read_world_file, write_world_file,
         has_real_api_key, get_world_style_card,
-        read_world_canon, read_branch_delta,
+        read_world_canon, read_branch_delta, require_world,
         _get_effective_editor_enabled, _get_effective_extractor_cross_check,
+        latest_turn_snapshot_dir, create_turn_snapshot,
+    )
+    from app.action_guard import (
+        content_hash, lookup_receipt, check_expected_revision, build_receipts_document, bump_revision, get_revision,
     )
     if display_input is None:
         display_input = narrator_input
 
-    world_path = world_path_of(world_name)
-    if not os.path.isdir(world_path):
-        raise HTTPException(status_code=404, detail="World not found")
+    world_path = require_world(world_name)
 
-    world_config = read_world_file(world_path, "world_config.json")
-    card_registry = read_world_file(world_path, "card_registry.json")
-    canon_timeline = read_world_file(world_path, "canon_timeline.json")
-    character_state = read_world_file(world_path, "character_state.json")
-    chapters_data = read_world_file(world_path, "chapters.json")
-    world_canon_store = read_world_canon(world_path)
-    branch_delta = read_branch_delta(world_path)
+    # The on-disk config is the current (post-last-turn) state; revision checks
+    # must always use it, not the snapshot's older revision.
+    current_config = read_world_file(world_path, "world_config.json")
+
+    # Regenerate must start from the state before the last turn, never accumulate
+    # on top of it. If a pre-turn snapshot exists we read the turn from it, so a
+    # failed regeneration leaves the old turn untouched on disk.
+    using_snapshot = False
+    if regenerate:
+        snapshot_dir = latest_turn_snapshot_dir(world_path)
+        if snapshot_dir and current_config.get("pre_turn_snapshot"):
+            using_snapshot = True
+            state_dir = snapshot_dir
+        else:
+            state_dir = world_path
+    else:
+        state_dir = world_path
+
+    world_config = read_world_file(state_dir, "world_config.json")
+    card_registry = read_world_file(state_dir, "card_registry.json")
+    canon_timeline = read_world_file(state_dir, "canon_timeline.json")
+    character_state = read_world_file(state_dir, "character_state.json")
+    chapters_data = read_world_file(state_dir, "chapters.json")
+    world_canon_store = read_world_canon(state_dir)
+    branch_delta = read_branch_delta(state_dir)
+
+    action_hash = content_hash({
+        "kind": "regenerate" if regenerate else "continue",
+        "input": narrator_input,
+        "display_input": display_input,
+    })
+    replay = lookup_receipt(world_path, request_id, action_hash)
+    if replay is not None:
+        return replay
+    revision_before = check_expected_revision(current_config, expected_revision)
+
+    if regenerate and not using_snapshot:
+        turns = chapters_data.get("chapters", [])
+        if not turns:
+            raise HTTPException(
+                status_code=400,
+                detail="Khong co turn nao de regenerate. World chua co chapter nao."
+            )
+        last_turn = turns[-1]
+        if last_turn.get("chapter_closed"):
+            closed_chapter_idx = last_turn.get("chapter_index", 0)
+            turns_before = [t for t in turns if t.get("chapter_index", 0) < closed_chapter_idx]
+            chapters_data["chapters"] = turns_before
+            if not turns_before:
+                chapters_data["running_summary"] = ""
+                chapters_data["memorable_beats"] = []
+        else:
+            chapters_data["chapters"] = turns[:-1]
 
     if world_config.get("lifecycle_status") == "completed":
         raise HTTPException(status_code=409, detail="This story is completed. Restore a save or create a branch to continue.")
 
     location_map = None
     try:
-        location_map = read_world_file(world_path, "location_map.json")
+        location_map = read_world_file(state_dir, "location_map.json")
     except (FileNotFoundError, json.JSONDecodeError):
         pass
 
@@ -216,11 +268,55 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     world_canon_facts = [f["statement"] for f in merged_canon.get("facts", []) if isinstance(f, dict) and f.get("statement")]
 
     multi_tier_context = build_multi_tier_context(
-        chapters_data, world_config, checkpoint, merged_canon.get("facts", [])
+        chapters_data, world_config, checkpoint, merged_canon.get("facts", []),
+        max_context_tokens=world_config.get("context_max_tokens"),
+    )
+
+    protagonist_entry = character_state.get("characters", {}).get(protagonist_id or "", {})
+    scene_location = protagonist_entry.get("location", "") if isinstance(protagonist_entry, dict) else ""
+    participants = scene_participants(
+        character_state, scene_location,
+        protagonist_id=protagonist_id,
+        allowed_ids=set(active_characters_state.keys()),
+        max_observers=world_config.get("psychology_max_npc_per_turn", 6),
+    )
+    narrative_characters = narrative_character_view(participants)
+
+    from app.story.knowledge import build_character_knowledge
+    character_knowledge = build_character_knowledge(
+        character_state.get("characters", {}),
+        list(participants.keys()),
+        merged_canon.get("facts", []),
+    )
+    from app.story.relationship_memory import build_relationship_context
+    relationship_context = build_relationship_context(
+        character_state.get("characters", {}), list(participants.keys())
+    )
+
+    from app.story.action_resolution import resolve_action
+    action_resolution = resolve_action(
+        narrator_input,
+        character_state.get("characters", {}),
+        protagonist_id,
+        world_config,
+        checkpoint=checkpoint,
+        location_map=location_map,
+        world_name=world_name,
+        turn_index=story_clock.get("tick", 0),
+        action_id=f"act_{current_checkpoint_id}_{story_clock.get('tick', 0)}",
     )
 
     base_payload = {
         "world_canon_facts": world_canon_facts,
+        # Per-subject knowledge (what each active character believes, with source
+        # and confidence). W02 uses this to keep a scene limited to observers.
+        "character_knowledge": character_knowledge,
+        # Event-grounded relationship memories per character (promises, debts,
+        # betrayals, ...). Not a replacement for affinity, a grounding for it.
+        "relationship_context": relationship_context,
+        # Engine-committed outcome of the player's action. The writer must narrate
+        # this result, never a different one.
+        "action_resolution": action_resolution,
         "world_config": {
             "genre": world_config.get("genre", ""),
             "story_thesis": world_config.get("story_thesis", ""),
@@ -253,7 +349,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             {"id": c["id"], "type": c["type"], "name": c["name"], "content": c["content"]}
             for c in active_cards
         ],
-        "character_state": active_characters_state,
+        "character_state": narrative_characters,
         "multi_tier_context": multi_tier_context,
         "user_input": narrator_input
     }
@@ -332,10 +428,10 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
 
     checker_result = run_consistency_checker(
         chapter_text, state_changes, world_config, checkpoint,
-        active_cards, active_characters_state, world_name=world_name
+        active_cards, narrative_characters, world_name=world_name
     )
     consistency_rewritten = False
-    if checker_result["severity"] == "major":
+    if checker_result["status"] == "failed":
         retry_payload = dict(base_payload)
         retry_payload["correction_note"] = build_consistency_correction_note(checker_result["issues"])
         chapter_text, state_changes, chapter_end, chapter_title, suggested_actions, draft_entities, _editor_polished, anchor_keywords, open_threads_update, _, _, missing_anchor_keywords, steps, variants, perception_data = call_writer_stage(
@@ -359,6 +455,57 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
                 recent_text=running_summary,
                 world_config=world_config
             )
+
+        # The fixed version must be re-checked within the same bounded retry:
+        # never mark a rewrite as passed without running the checker again.
+        checker_result = run_consistency_checker(
+            chapter_text, state_changes, world_config, checkpoint,
+            active_cards, narrative_characters, world_name=world_name
+        )
+
+    unchecked_commit_allowed = (
+        checker_result["status"] == "unavailable"
+        and bool(world_config.get("allow_unchecked_commit", False))
+    )
+    if checker_result["status"] != "passed" and not unchecked_commit_allowed:
+        # Explicit policy: a turn the checker could not confirm is kept as a draft
+        # and NOT committed. A known failure (major contradiction after the bounded
+        # rewrite) is also not applied; allow_unchecked_commit only covers the
+        # "could not check at all" case, never a known-bad result. Nothing below
+        # runs, so no tick/consequence is applied.
+        if checker_result["status"] == "failed":
+            reason = "consistency_check_failed"
+            status_code = 422
+            message = (
+                "The consistency checker still found major contradictions after one rewrite, "
+                "so this turn was kept as a draft and was NOT saved. Tick and consequences are "
+                "unchanged. Adjust the action or retry."
+            )
+        else:
+            reason = "consistency_checker_unavailable"
+            status_code = 503
+            message = (
+                "Consistency checker did not run, so this turn was kept as a draft and was NOT saved. "
+                "Tick and consequences are unchanged. Retry the action."
+            )
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "reason": reason,
+                "status": checker_result["status"],
+                "retryable": True,
+                "persisted": False,
+                "message": message,
+                "consistency_check": {
+                    "status": checker_result["status"],
+                    "severity": checker_result["severity"],
+                    "issues": checker_result["issues"],
+                    "explanation": checker_result["explanation"],
+                    "triggered_rewrite": consistency_rewritten,
+                },
+                "draft_chapter_text": chapter_text,
+            }
+        )
 
     this_chapter_index, this_turn_index = get_open_chapter_state(chapters_data)
 
@@ -406,23 +553,30 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         })
     world_config["open_threads"] = open_threads
 
-    # Psychology Runtime — per-observer LLM calls
+    # Psychology Runtime — only characters present and able to perceive the scene.
+    # Distant NPCs never receive the transcript; they learn later through a
+    # told-by/rumor channel. The number of psychology calls is capped per turn.
+    psychology_status = {"status": "disabled"}
     if world_config.get("psychology_enabled", True):
-        active_chars_for_psych = {
-            cid: st for cid, st in character_state.get("characters", {}).items()
-            if cid in active_characters_state or st.get("alive", True)
+        from app.story.observer import psychology_subjects
+        psych_subjects = psychology_subjects(participants, protagonist_id)
+        psychology_status = {
+            "status": "ran" if psych_subjects else "skipped",
+            "scene_location": scene_location,
+            "participants": list(participants.keys()),
+            "subjects": list(psych_subjects.keys()),
         }
-        if active_chars_for_psych and len(active_chars_for_psych) > 0:
+        if psych_subjects:
             try:
                 perceptions = generate_perceptions_for_all_characters(
-                    active_chars_for_psych,
+                    psych_subjects,
                     chapter_text,
                     world_config,
                     checkpoint,
                     world_name=world_name
                 )
                 psych_updates = update_psychologies_for_all_characters(
-                    active_chars_for_psych,
+                    psych_subjects,
                     chapter_text,
                     perceptions,
                     world_config,
@@ -434,13 +588,20 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
                 )
                 chapter_record_perception = {
                     cid: per for cid, per in perceptions.items()
-                    if cid in active_chars_for_psych
+                    if cid in psych_subjects
                 }
                 if chapter_record_perception:
                     state_changes["perception_data"] = chapter_record_perception
                 if psych_updates:
                     state_changes["psychology_updates"] = psych_updates
             except Exception as e:
+                psychology_status = {
+                    "status": "error",
+                    "reason": str(e),
+                    "scene_location": scene_location,
+                    "participants": list(participants.keys()),
+                    "subjects": list(psych_subjects.keys()),
+                }
                 logger.warning(f"Psychology runtime failed for world={world_name}: {e}")
 
     this_chapter_closed = decide_chapter_closed(
@@ -461,7 +622,10 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "chapter_text": chapter_text,
         "notes": state_changes.get("notes", ""),
         "boundary_correction": boundary_correction,
+        "psychology_status": psychology_status,
+        "action_resolution": action_resolution,
         "consistency_check": {
+            "status": checker_result["status"],
             "severity": checker_result["severity"],
             "issues": checker_result["issues"],
             "explanation": checker_result["explanation"],
@@ -518,6 +682,37 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         world_canon_store, location_map
     )
 
+    # Discovery: the player only learns of an event if it is discoverable from the
+    # start or they were present when it resolved. Far events stay hidden (no
+    # spoiler). Discovery travels with the turn commit.
+    from app.story.discovery import load_discoveries, record_discovery, ensure_start_discoveries
+    discovery_store = load_discoveries(world_path)
+    discovery_changed = ensure_start_discoveries(
+        discovery_store, world_events.get("events", []), story_clock["tick"]
+    )
+    protagonist_location = character_state.get("characters", {}).get(protagonist_id, {}).get("location", "")
+    for event in world_events.get("events", []):
+        if not isinstance(event, dict) or event.get("event_id") not in resolved:
+            continue
+        outcome = next(
+            (o for o in event.get("outcomes", [])
+             if isinstance(o, dict) and o.get("outcome_id") == event.get("resolved_outcome_id")),
+            None,
+        )
+        event_location = event.get("location_id") or ""
+        if not event_location and outcome:
+            for effect in outcome.get("location_effects", []) or []:
+                if isinstance(effect, dict) and effect.get("location_id"):
+                    event_location = effect["location_id"]
+                    break
+        if event_location and (str(event_location).strip().lower()
+                               == str(protagonist_location).strip().lower()):
+            discovery_changed |= record_discovery(
+                discovery_store, event.get("event_id", ""),
+                {"kind": "witnessed", "who": protagonist_id, "tick": story_clock["tick"]},
+                story_clock["tick"], known_deadline_tick=event.get("deadline_tick"),
+            )
+
     # Tick endgame after checkpoint advancement and world events.
     endgame_result = tick_endgame(world_config, character_state["characters"])
     if endgame_result.get("status_changed"):
@@ -552,11 +747,23 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
 
     check_rolling_summary_trigger(chapters_data, world_name=world_name, world_config=world_config)
 
+    # Keep the revision monotonic even when regenerating from an older snapshot.
+    world_config["revision"] = max(get_revision(world_config), revision_before)
+    world_config["revision"] = bump_revision(world_config)
+
+    # Record the pre-turn state so a later regenerate starts from here. When
+    # regenerating we keep the existing snapshot (it already is that state).
+    if not using_snapshot:
+        create_turn_snapshot(world_path)
+    world_config["pre_turn_snapshot"] = "latest"
+
     updates = {
         "character_state.json": character_state,
         "chapters.json": chapters_data,
         "world_config.json": world_config,
     }
+    if discovery_changed:
+        updates["discovery.json"] = discovery_store
     if checkpoint_advanced or draft_entities:
         updates["card_registry.json"] = card_registry
     if resolved:
@@ -572,9 +779,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             world_name, chapter_text, existing_facts, world_config
         )
 
-    commit_world_files(world_path, updates)
-
-    return {
+    response = {
         "chapter": chapter_record,
         "state_changes_applied": state_changes,
         "used_mock_llm": not has_real_api_key(world_name),
@@ -582,4 +787,16 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "lore_rag_filter": lore_rag_filter,
         "suggested_actions": suggested_actions,
         "extractor_cross_check": extractor_cross_check,
+        "revision": world_config["revision"],
     }
+    # The receipt travels in the same commit as the turn (journaled as one unit),
+    # so a retry with the same request_id replays it without calling the model
+    # again, and a crash never leaves a committed turn without its receipt.
+    receipts = build_receipts_document(world_path, request_id, action_hash, revision_before, response)
+    if receipts is not None:
+        updates["turn_receipts.json"] = receipts
+
+    commit_world_files(world_path, updates)
+
+    return response
+    return response

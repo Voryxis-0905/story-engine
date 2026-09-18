@@ -22,7 +22,7 @@ Trên macOS/Linux: `source .venv/bin/activate`. Nếu máy hạn chế chạy sc
 4. Cập nhật tài liệu khi đổi luồng, API hoặc định dạng dữ liệu.
 5. Chạy `npm run check` rồi mở PR, ghi rõ kết quả và giới hạn kiểm tra.
 
-`npm run check` chạy test backend, bộ kiểm tra cũ, build TypeScript/giao diện và lint. Có thể chạy riêng `npm test`, `npm run test:legacy`, `npm run build`, `npm run lint`. CI chạy cùng các bước trên Windows và Linux cho backend, Linux cho giao diện.
+`npm run check` chạy test backend, bộ kiểm tra cũ, test giao diện (Vitest), build TypeScript/giao diện và lint. Có thể chạy riêng `npm test`, `npm run test:legacy`, `npm run test:ui`, `npm run test:e2e`, `npm run build`, `npm run lint`. CI chạy cùng các bước trên Windows và Linux cho backend, Linux cho giao diện; E2E cần cài Chromium bằng `npm --prefix ui exec -- playwright install --with-deps chromium`.
 
 ## Dữ liệu và thay đổi hành vi
 

@@ -3,12 +3,14 @@ import json
 import os
 import shutil
 from app.persistence import commit_world_files, locked_world
+from app.action_guard import clear_receipts, check_expected_revision, bump_revision
 
 from app.storage import (
     require_world, world_path_of, read_world_file, write_world_file,
     has_real_api_key, get_world_style_card, write_world_style_card,
     read_saves_index, write_saves_index, snapshot_world_state,
-    build_save_entry, new_save_id, _validate_world_name
+    build_save_entry, new_save_id, _validate_world_name, bump_world_revision,
+    clear_turn_snapshots, read_world_canon, mark_builder_manual
 )
 from app.engine import (
     TEMPLATES, call_llm, parse_llm_json, make_card, make_checkpoint,
@@ -17,6 +19,8 @@ from app.engine import (
     build_rag_context_text, get_recent_turns_for_context,
     DEFAULT_LORE_RAG_MAX_TOKENS, select_relevant_lore_cards
 )
+from app.world.schema import CORE_STATE_FILES, ensure_current_schema, read_schema_version, SchemaVersionError
+from app.world.templates import SCHEMA_VERSION
 from app.models import (
     CardRegistryUpdate, CanonTimelineUpdate, CharacterStateUpdate,
     ForceAdvanceRequest, CreateSaveRequest, BranchRequest,
@@ -27,6 +31,35 @@ from app.models import (
 router = APIRouter()
 
 
+def _ensure_snapshot_compatible(save_dir: str) -> dict:
+    """Validate/migrate a save snapshot before it is restored or branched.
+
+    A snapshot newer than the app is rejected before any write (so no byte of
+    the world changes). An older snapshot is migrated in place with a backup
+    inside the snapshot folder.
+    """
+    if not os.path.isdir(save_dir):
+        raise HTTPException(status_code=404, detail="Save snapshot folder not found")
+    config_path = os.path.join(save_dir, "world_config.json")
+    if os.path.isfile(config_path):
+        try:
+            version = read_schema_version(save_dir)
+        except SchemaVersionError as error:
+            raise HTTPException(status_code=409, detail=str(error))
+        if version > SCHEMA_VERSION:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Save snapshot schema_version {version} is newer than this app supports "
+                    f"(max {SCHEMA_VERSION}). Update Story Engine before restoring or branching."
+                ),
+            )
+    try:
+        return ensure_current_schema(save_dir)
+    except SchemaVersionError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+
+
 @router.put("/worlds/{world_name}/card_registry")
 def update_card_registry(world_name: str, req: CardRegistryUpdate):
     world_path = require_world(world_name)
@@ -35,6 +68,8 @@ def update_card_registry(world_name: str, req: CardRegistryUpdate):
     if len(ids) != len(set(ids)):
         raise HTTPException(status_code=400, detail="card id is duplicated, each card must have a unique id")
     write_world_file(world_path, "card_registry.json", {"cards": cards})
+    bump_world_revision(world_path)
+    mark_builder_manual(world_path, "cards")
     return {"message": "card_registry updated", "cards": len(cards)}
 
 
@@ -46,6 +81,8 @@ def update_canon_timeline(world_name: str, req: CanonTimelineUpdate):
     if len(ids) != len(set(ids)):
         raise HTTPException(status_code=400, detail="checkpoint_id is duplicated, each checkpoint must have a unique id")
     write_world_file(world_path, "canon_timeline.json", {"checkpoints": checkpoints})
+    bump_world_revision(world_path)
+    mark_builder_manual(world_path, "skeleton")
     return {"message": "canon_timeline updated", "checkpoints": len(checkpoints)}
 
 
@@ -54,6 +91,8 @@ def update_character_state(world_name: str, req: CharacterStateUpdate):
     world_path = require_world(world_name)
     characters = {cid: c.model_dump() for cid, c in req.characters.items()}
     write_world_file(world_path, "character_state.json", {"characters": characters})
+    bump_world_revision(world_path)
+    mark_builder_manual(world_path, "characters")
     return {"message": "character_state updated", "characters": len(characters)}
 
 
@@ -106,6 +145,7 @@ def force_advance_checkpoint(world_name: str, req: ForceAdvanceRequest):
     write_world_file(world_path, "world_config.json", world_config)
     write_world_file(world_path, "card_registry.json", card_registry)
     write_world_file(world_path, "character_state.json", character_state)
+    bump_world_revision(world_path)
 
     return {
         "message": "Forced checkpoint transition",
@@ -121,7 +161,7 @@ def force_advance_checkpoint(world_name: str, req: ForceAdvanceRequest):
 def create_save(world_name: str, req: CreateSaveRequest):
     world_path = require_world(world_name)
     save_id = new_save_id()
-    snapshot_world_state(world_path, save_id, TEMPLATES)
+    snapshot_world_state(world_path, save_id, CORE_STATE_FILES)
     entry = build_save_entry(world_path, save_id, req.label.strip(), "manual")
     saves = read_saves_index(world_path)
     saves.append(entry)
@@ -143,8 +183,11 @@ def restore_save(world_name: str, save_id: str):
     if not any(s["save_id"] == save_id for s in saves):
         raise HTTPException(status_code=404, detail=f"Could not find save '{save_id}'")
 
+    src_dir = os.path.join(world_path, "saves", save_id)
+    _ensure_snapshot_compatible(src_dir)
+
     safety_id = new_save_id()
-    snapshot_world_state(world_path, safety_id, TEMPLATES)
+    snapshot_world_state(world_path, safety_id, CORE_STATE_FILES)
     safety_entry = build_save_entry(
         world_path, safety_id,
         f"Automatic (before restoring to '{save_id}')",
@@ -152,9 +195,8 @@ def restore_save(world_name: str, save_id: str):
     )
     saves.append(safety_entry)
 
-    src_dir = os.path.join(world_path, "saves", save_id)
     updates = {}
-    for filename, template in TEMPLATES.items():
+    for filename, template in CORE_STATE_FILES.items():
         src = os.path.join(src_dir, filename)
         if os.path.exists(src):
             updates[filename] = read_world_file(src_dir, filename)
@@ -162,12 +204,20 @@ def restore_save(world_name: str, save_id: str):
             # A legacy save must not inherit events/map/canon from its future.
             updates[filename] = template
 
+    # A restored world is a new state: advance the revision so stale actions are
+    # rejected, and drop old receipts so they cannot be replayed across a restore.
+    current_revision = int(read_world_file(world_path, "world_config.json").get("revision", 0) or 0)
+    updates["world_config.json"]["revision"] = current_revision + 1
+    updates["world_config.json"]["pre_turn_snapshot"] = None
     updates["saves_index.json"] = {"saves": saves}
     commit_world_files(world_path, updates)
+    clear_receipts(world_path)
+    clear_turn_snapshots(world_path)
     return {
         "message": "Restored world to the selected save point",
         "restored_save_id": save_id,
-        "safety_save_id": safety_id
+        "safety_save_id": safety_id,
+        "revision": current_revision + 1,
     }
 
 
@@ -193,6 +243,9 @@ def branch_from_save(world_name: str, save_id: str, req: BranchRequest):
     if not any(s["save_id"] == save_id for s in saves):
         raise HTTPException(status_code=404, detail=f"Could not find save '{save_id}'")
 
+    src_dir = os.path.join(world_path, "saves", save_id)
+    _ensure_snapshot_compatible(src_dir)
+
     new_name = req.new_world_name.strip()
     _validate_world_name(new_name)
     if not new_name:
@@ -201,9 +254,8 @@ def branch_from_save(world_name: str, save_id: str, req: BranchRequest):
     if os.path.exists(new_world_path):
         raise HTTPException(status_code=400, detail=f"World '{new_name}' already exists")
 
-    src_dir = os.path.join(world_path, "saves", save_id)
     os.makedirs(new_world_path)
-    for filename, template in TEMPLATES.items():
+    for filename, template in CORE_STATE_FILES.items():
         src = os.path.join(src_dir, filename)
         if os.path.exists(src):
             shutil.copy2(src, os.path.join(new_world_path, filename))
@@ -212,7 +264,12 @@ def branch_from_save(world_name: str, save_id: str, req: BranchRequest):
 
     cfg = read_world_file(new_world_path, "world_config.json")
     cfg["branched_from"] = {"world": world_name, "save_id": save_id, "at": __import__('time').strftime("%Y-%m-%d %H:%M:%S UTC", __import__('time').gmtime())}
+    # A branch starts its own revision timeline; the source receipts are not copied.
+    cfg["revision"] = 0
+    cfg["pre_turn_snapshot"] = None
     write_world_file(new_world_path, "world_config.json", cfg)
+    clear_receipts(new_world_path)
+    clear_turn_snapshots(new_world_path)
 
     return {
         "message": f"Branched new world '{new_name}' from save '{save_id}'",
@@ -282,6 +339,7 @@ def update_world_style_card_endpoint(world_name: str, req: StyleCardModel):
     require_world(world_name)
     data = req.model_dump()
     write_world_style_card(world_name, data)
+    bump_world_revision(world_path_of(world_name))
     return {"message": "style_card updated", "style_card": data}
 
 
@@ -303,6 +361,7 @@ def create_trait(world_name: str, trait: TraitDefinition):
         raise HTTPException(status_code=400, detail="Trait already exists")
     world_config["trait_definitions"][trait.name] = trait.model_dump()
     write_world_file(world_path, "world_config.json", world_config)
+    bump_world_revision(world_path)
     return {"status": "created", "trait": trait.name}
 
 
@@ -316,6 +375,7 @@ def update_trait(world_name: str, trait_name: str, trait: TraitDefinition):
     traits[trait_name] = trait.model_dump()
     world_config["trait_definitions"] = traits
     write_world_file(world_path, "world_config.json", world_config)
+    bump_world_revision(world_path)
     return {"status": "updated", "trait": trait_name}
 
 
@@ -329,14 +389,13 @@ def delete_trait(world_name: str, trait_name: str):
     del traits[trait_name]
     world_config["trait_definitions"] = traits
     write_world_file(world_path, "world_config.json", world_config)
+    bump_world_revision(world_path)
     return {"status": "deleted", "trait": trait_name}
 
 
 @router.get("/worlds/{world_name}/graph")
 def get_checkpoint_graph(world_name: str):
-    world_path = world_path_of(world_name)
-    if not os.path.isdir(world_path):
-        raise HTTPException(status_code=404, detail="World not found")
+    world_path = require_world(world_name)
     canon = read_world_file(world_path, "canon_timeline.json")
 
     graph = {}
@@ -383,8 +442,150 @@ def update_foreshadowings(world_name: str, req: ForeshadowingsUpdateReq):
         raise HTTPException(status_code=400, detail="Missing foreshadowing_tracker or foreshadowings field")
     world_config["foreshadowing_tracker"] = items
     write_world_file(world_path, "world_config.json", world_config)
+    bump_world_revision(world_path)
     return {
         "message": "foreshadowings updated",
         "foreshadowing_tracker": items,
         "foreshadowings": items
     }
+
+
+_EDITABLE_CHARACTER_FIELDS = frozenset({
+    "alive", "location", "inventory", "knowledge_flags", "relationships",
+    "karma", "age", "appearance", "personality", "backstory",
+    "abilities_and_limits", "speech_style", "secrets",
+})
+
+
+@router.post("/worlds/{world_name}/creator/edit")
+@locked_world
+def creator_edit(world_name: str, req: dict):
+    """Creator edit with preview, revision check and a revision log (W07).
+
+    Player narration never reaches this endpoint, so a player saying "the enemy
+    dies instantly" cannot rewrite canon. A creator edit previews validation
+    first, refuses a stale revision, and commits the affected files as one unit.
+    """
+    from app.world_events import (
+        load_world_events, EVENT_RESOLUTIONS, resolve_event_by_creator,
+    )
+
+    world_path = require_world(world_name)
+    world_config = read_world_file(world_path, "world_config.json")
+    current_revision = check_expected_revision(world_config, req.get("expected_revision"))
+
+    changes = req.get("changes", [])
+    if not isinstance(changes, list) or not changes:
+        raise HTTPException(status_code=400, detail="changes must be a non-empty list")
+    preview = bool(req.get("preview"))
+    reason = str(req.get("reason", ""))
+
+    character_state = read_world_file(world_path, "character_state.json")
+    canon = read_world_canon(world_path)
+    world_events = load_world_events(world_path)
+    try:
+        location_map = read_world_file(world_path, "location_map.json")
+    except FileNotFoundError:
+        location_map = {"locations": []}
+    characters = character_state.setdefault("characters", {})
+
+    applied = []
+    errors = []
+    for change in changes:
+        if not isinstance(change, dict):
+            errors.append("change must be an object")
+            continue
+        kind = change.get("kind")
+        if kind == "character":
+            char_id = change.get("character_id")
+            field = change.get("field")
+            value = change.get("value")
+            character = characters.get(char_id)
+            if not isinstance(character, dict):
+                errors.append(f"unknown character '{char_id}'")
+                continue
+            if field not in _EDITABLE_CHARACTER_FIELDS:
+                errors.append(f"field '{field}' is not editable")
+                continue
+            if field == "alive" and not isinstance(value, bool):
+                errors.append("alive must be a boolean")
+                continue
+            if field in ("inventory", "knowledge_flags") and not isinstance(value, list):
+                errors.append(f"{field} must be a list")
+                continue
+            if field == "relationships" and not isinstance(value, dict):
+                errors.append("relationships must be an object")
+                continue
+            character[field] = value
+            applied.append({"kind": "character", "character_id": char_id, "field": field})
+        elif kind == "fact_override":
+            fact_id = change.get("fact_id")
+            statement = change.get("statement")
+            fact = next((f for f in canon.get("facts", [])
+                         if isinstance(f, dict) and f.get("fact_id") == fact_id), None)
+            if fact is None:
+                errors.append(f"unknown fact '{fact_id}'")
+                continue
+            if not isinstance(statement, str) or not statement.strip():
+                errors.append("statement must be a non-empty string")
+                continue
+            fact["statement"] = statement
+            applied.append({"kind": "fact_override", "fact_id": fact_id})
+        elif kind == "event_resolution":
+            event_id = change.get("event_id")
+            status = change.get("status")
+            event = next((e for e in world_events.get("events", [])
+                          if isinstance(e, dict) and e.get("event_id") == event_id), None)
+            if event is None:
+                errors.append(f"unknown event '{event_id}'")
+                continue
+            if status != "pending" and status not in EVENT_RESOLUTIONS:
+                errors.append(f"invalid event status '{status}'")
+                continue
+            try:
+                result = resolve_event_by_creator(
+                    event, status, change.get("outcome_id"),
+                    world_config.get("story_clock", {}).get("tick", 0),
+                    world_config, canon, characters, location_map,
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            applied.append({
+                "kind": "event_resolution", "event_id": event_id,
+                "status": status, "outcome_id": result.get("outcome_id"),
+            })
+        else:
+            errors.append(f"unknown change kind '{kind}'")
+
+    validation = {"ok": not errors, "errors": errors}
+    if preview:
+        return {
+            "preview": True, "ok": not errors, "applied": applied,
+            "validation": validation, "current_revision": current_revision,
+        }
+    if errors:
+        raise HTTPException(status_code=400, detail=validation)
+
+    revision_no = bump_revision(world_config)
+    revisions = world_config.setdefault("creator_revisions", [])
+    if not isinstance(revisions, list):
+        world_config["creator_revisions"] = revisions = []
+    revisions.append({
+        "revision": revision_no,
+        "reason": reason,
+        "changes": changes,
+        "base_revision": current_revision,
+        "at": __import__('time').strftime("%Y-%m-%d %H:%M:%S UTC", __import__('time').gmtime()),
+    })
+    commit_world_files(world_path, {
+        "world_config.json": world_config,
+        "character_state.json": character_state,
+        "world_canon_store.json": canon,
+        "world_events.json": world_events,
+        "location_map.json": location_map,
+    })
+    clear_receipts(world_path)
+    if any(item.get("kind") == "event_resolution" for item in applied):
+        mark_builder_manual(world_path, "events")
+    return {"ok": True, "revision": revision_no, "applied": applied, "validation": validation}

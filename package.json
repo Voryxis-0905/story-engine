@@ -8,6 +8,8 @@
     "lint": "npm --prefix ui run lint",
     "test": "python backend/run_tests.py",
     "test:legacy": "python backend/run_tests.py --legacy",
-    "check": "npm run test && npm run test:legacy && npm run build && npm run lint"
+    "test:ui": "npm --prefix ui run test",
+    "test:e2e": "npm --prefix ui run test:e2e",
+    "check": "npm run test && npm run test:legacy && npm run test:ui && npm run build && npm run lint"
   }
 }
