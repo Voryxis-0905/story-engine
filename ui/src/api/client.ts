@@ -36,6 +36,11 @@ export interface PlayState {
   story_clock: Record<string, any>;
   foreshadowing_tracker: any[];
   style_card: any;
+  output_length?: string;
+  revision?: number;
+  lifecycle_status?: string;
+  story_mode?: string;
+  epilogue?: { text: string; chosen_choice?: string } | null;
 }
 
 export interface ChapterContinueResponse {
@@ -55,6 +60,7 @@ export interface ChapterContinueResponse {
   used_mock_llm: boolean;
   checkpoint_advanced: boolean;
   lore_rag_filter: any;
+  revision?: number;
 }
 
 export interface ChapterStartRequest {
@@ -67,21 +73,48 @@ export interface LintChapterRequest {
   linter_suggestions: any[];
 }
 
-export interface RuntimeConfig {
+export interface RuntimeConfigStatus {
   llm_provider: string;
-  api_key?: string;
   model_name?: string;
   temperature?: number;
   base_url?: string;
-  api_key_masked?: string;
+  api_key_masked?: string | null;
+  api_key_source?: string;
+  has_api_key?: boolean;
   model?: string;
+}
+
+export interface RuntimeConfigUpdatePayload {
+  llm_provider?: string;
+  model_name?: string;
+  temperature?: number;
+  base_url?: string;
+  api_key?: string;
+  api_key_action?: 'keep' | 'replace' | 'delete';
 }
 
 async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, options);
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`API error ${res.status}: ${text}`);
+    let message = `API error ${res.status}: ${text}`;
+    let detail: any;
+    try {
+      const body = JSON.parse(text);
+      detail = body?.detail;
+      if (typeof detail === 'string') {
+        message = detail;
+      } else if (detail && typeof detail === 'object') {
+        message = detail.message || detail.reason || `API error ${res.status}`;
+      }
+    } catch {
+      // keep the raw text message
+    }
+    const error = new Error(message) as Error & { detail?: any };
+    if (detail !== undefined) {
+      error.detail = detail;
+    }
+    throw error;
   }
   return res.json();
 }
@@ -98,6 +131,12 @@ export const api = {
       }),
     delete: (name: string) =>
       fetchJSON<any>(`/worlds/${name}`, { method: 'DELETE' }),
+    updateConfig: (name: string, payload: Record<string, any>) =>
+      fetchJSON<any>(`/worlds/${name}/world_config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }),
     seedDemo: (name: string, overwrite: boolean = false) =>
       fetchJSON<any>(`/worlds/${name}/seed-demo?overwrite=${overwrite}`, { method: 'POST' }),
     affinityGraph: (name: string) =>
@@ -121,14 +160,35 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
       }),
-    continue: (worldName: string, userInput: string) =>
+    continue: (worldName: string, userInput: string, opts?: { requestId?: string; expectedRevision?: number }) =>
       fetchJSON<ChapterContinueResponse>(`/worlds/${worldName}/chapter/continue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_input: userInput }),
+        body: JSON.stringify({
+          user_input: userInput,
+          request_id: opts?.requestId,
+          expected_revision: opts?.expectedRevision,
+        }),
       }),
-    regenerate: (worldName: string) =>
-      fetchJSON<any>(`/worlds/${worldName}/chapter/regenerate`, { method: 'POST' }),
+    regenerate: (worldName: string, opts?: { requestId?: string; expectedRevision?: number }) =>
+      fetchJSON<any>(`/worlds/${worldName}/chapter/regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_id: opts?.requestId,
+          expected_revision: opts?.expectedRevision,
+        }),
+      }),
+    endgameStatus: (worldName: string) =>
+      fetchJSON<any>(`/worlds/${worldName}/chapter/endgame-status`),
+    epilogueChoices: (worldName: string) =>
+      fetchJSON<{ choices: string[] }>(`/worlds/${worldName}/chapter/generate-epilogue-choices`, { method: 'POST' }),
+    generateEpilogue: (worldName: string, chosenChoice: string) =>
+      fetchJSON<any>(`/worlds/${worldName}/chapter/generate-epilogue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chosen_choice: chosenChoice }),
+      }),
     getChapters: (worldName: string) =>
       fetchJSON<any[]>(`/worlds/${worldName}/chapters`),
     prelude: {
@@ -173,6 +233,18 @@ export const api = {
       fetchJSON<{ status: string; message?: string; fixed_cards?: any; sanitized_conditions?: any }>(`/worlds/${worldName}/builder/step`, {
         method: 'POST',
       }),
+    status: (worldName: string) =>
+      fetchJSON<{ creation_status: string; next_step: string | null; steps_done: string[]; has_checkpoints: boolean; has_cards: boolean; has_characters: boolean; has_events: boolean }>(`/worlds/${worldName}/builder/status`),
+    events: (worldName: string) =>
+      fetchJSON<{ status: string; events_created: number }>(`/worlds/${worldName}/builder/events`, { method: 'POST' }),
+    replan: (worldName: string, concept: string) =>
+      fetchJSON<{ regenerate_steps: string[]; preserved_steps: string[]; note: string }>(`/worlds/${worldName}/builder/replan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ concept }),
+      }),
+    applyReplan: (worldName: string) =>
+      fetchJSON<{ applied: boolean; regenerate_steps: string[]; preserved_steps: string[]; creation_status: string }>(`/worlds/${worldName}/builder/apply-replan`, { method: 'POST' }),
   },
   creator: {
     saves: {
@@ -232,19 +304,27 @@ export const api = {
       }),
   },
   config: {
-    get: () => fetchJSON<RuntimeConfig>('/runtime-config'),
-    update: (config: RuntimeConfig) =>
-      fetchJSON<any>('/runtime-config', {
+    get: () => fetchJSON<RuntimeConfigStatus>('/runtime-config'),
+    update: (config: RuntimeConfigUpdatePayload) =>
+      fetchJSON<RuntimeConfigStatus>('/runtime-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       }),
+    clearApiKey: () =>
+      fetchJSON<RuntimeConfigStatus>('/runtime-config/api-key', { method: 'DELETE' }),
     testConnection: () =>
       fetchJSON<{ ok?: boolean; status?: string; message: string }>('/runtime-config/test-connection', { method: 'POST' }),
   },
   codex: {
     get: (worldName: string) =>
       fetchJSON<any>(`/worlds/${worldName}/codex`),
+  },
+  discovery: {
+    questBoard: (worldName: string) =>
+      fetchJSON<{ quests: any[]; enabled: boolean }>(`/worlds/${worldName}/quest_board`),
+    journal: (worldName: string) =>
+      fetchJSON<{ entries: any[] }>(`/worlds/${worldName}/journal`),
   },
   map: {
     get: (worldName: string) =>

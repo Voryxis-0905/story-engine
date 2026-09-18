@@ -64,12 +64,17 @@ def generate_perception_for_character(
     """
     char_name = character_state.get("name", character_id)
     psychology = PsychologyState.from_dict(character_state.get("psychology", {}))
+    from app.story.relationship_memory import relevant_memories
+    relationship_memories = relevant_memories(all_characters, character_id, limit=5)
 
     payload = {
         "character_name": char_name,
         "character_id": character_id,
         "character_personality": character_state.get("personality", ""),
         "character_goals": character_state.get("goals", []),
+        "character_knowledge": character_state.get("knowledge", []) if isinstance(character_state.get("knowledge"), list) else [],
+        "relationship_memories": relationship_memories,
+        "location": character_state.get("location", ""),
         "psychology": psychology.to_dict(),
         "chapter_text": chapter_text,
         "other_characters": [
@@ -130,6 +135,8 @@ def update_psychology_for_character(
         "current_psychology": psychology.to_dict(),
         "chapter_text": chapter_text,
         "perception_data": perception_data,
+        "character_knowledge": character_state.get("knowledge", []) if isinstance(character_state.get("knowledge"), list) else [],
+        "relationship_memories": character_state.get("relationship_memories", [])[:5] if isinstance(character_state.get("relationship_memories"), list) else [],
         "world_tone": world_config.get("tone", "neutral"),
         "personality": character_state.get("personality", ""),
         "goals": character_state.get("goals", [])

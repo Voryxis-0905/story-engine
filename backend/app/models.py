@@ -33,6 +33,9 @@ class WorldConfigUpdate(BaseModel):
     output_length: Optional[Literal["Concise", "Standard", "Detailed"]] = None
     pov_angle: Optional[Literal["1st_person", "3rd_person_limited", "3rd_person_omniscient"]] = None
     prelude_enabled: Optional[bool] = None
+    allow_unchecked_commit: Optional[bool] = None
+    action_rules: Optional[List[Dict[str, Any]]] = None
+    context_max_tokens: Optional[int] = None
 
 
 class TraitDefinition(BaseModel):
@@ -112,6 +115,7 @@ class RuntimeConfigUpdate(BaseModel):
     openrouter_api_key: Optional[str] = None
     openrouter_model: Optional[str] = None
     api_key: Optional[str] = None
+    api_key_action: Optional[Literal["keep", "replace", "delete"]] = None
     model_name: Optional[str] = None
     llm_provider: Optional[str] = None
     base_url: Optional[str] = None
@@ -125,6 +129,8 @@ class RuntimeConfigUpdate(BaseModel):
 
 class ChapterContinueRequest(BaseModel):
     user_input: str
+    request_id: Optional[str] = None
+    expected_revision: Optional[int] = None
 
 
 class ChapterStartRequest(BaseModel):
@@ -242,7 +248,8 @@ class BranchRequest(BaseModel):
 
 
 class RegenerateRequest(BaseModel):
-    pass
+    request_id: Optional[str] = None
+    expected_revision: Optional[int] = None
 
 
 class ForeshadowingsUpdateReq(BaseModel):

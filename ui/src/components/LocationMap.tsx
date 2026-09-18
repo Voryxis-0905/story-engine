@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+﻿import { useRef, useEffect, useState } from 'react';
 
 interface Location {
   id: string;
@@ -20,6 +20,128 @@ interface Location {
 interface LocationMapProps {
   locations: Location[];
   onSelect?: (id: string) => void;
+}
+
+function drawMap(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  locs: Location[],
+  hoverId: string | null,
+  selId: string | null,
+) {
+  const byId = new Map(locs.map((l) => [l.id, l]));
+  const byName = new Map(locs.map((l) => [l.name, l]));
+  const resolveLoc = (ref: string): Location | undefined => byId.get(ref) || byName.get(ref);
+
+  ctx.clearRect(0, 0, size, size);
+
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size * 0.7);
+  grad.addColorStop(0, '#1a1a2e');
+  grad.addColorStop(1, '#0a0a12');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 10; i++) {
+    const p = (i / 10) * size;
+    ctx.beginPath();
+    ctx.moveTo(p, 0);
+    ctx.lineTo(p, size);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, p);
+    ctx.lineTo(size, p);
+    ctx.stroke();
+  }
+
+  for (const loc of locs) {
+    const from = loc;
+    const connIds = loc.connected_to || [];
+    for (const connRef of connIds) {
+      const to = resolveLoc(connRef);
+      if (!to) continue;
+
+      const x1 = from.x * size;
+      const y1 = from.y * size;
+      const x2 = to.x * size;
+      const y2 = to.y * size;
+
+      const bothUnlocked = from.is_unlocked && to.is_unlocked;
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = bothUnlocked ? '#3a3a5a' : '#18182a';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  for (const loc of locs) {
+    const x = loc.x * size;
+    const y = loc.y * size;
+    const isHover = hoverId === loc.id;
+    const isSel = selId === loc.id;
+    const isUnlocked = loc.is_unlocked;
+
+    if (!isUnlocked) {
+      ctx.fillStyle = 'rgba(0,0,0,0.75)';
+      ctx.beginPath();
+      ctx.arc(x, y, 18, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#4a4a5a';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, 18, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = '#5a5a6a';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('đŸ”’', x, y);
+
+      ctx.fillStyle = '#6b7280';
+      ctx.font = `${isHover ? '10px' : '8px'} sans-serif`;
+      ctx.fillText(loc.name, x, y + 28);
+      continue;
+    }
+
+    if (isHover || isSel) {
+      ctx.shadowColor = '#6366f1';
+      ctx.shadowBlur = 20;
+    }
+
+    const radius = isHover || isSel ? 12 : 7;
+    ctx.fillStyle = isHover || isSel ? '#818cf8' : '#4f46e5';
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    if (loc.is_starting_location) {
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#e4e4e7';
+    ctx.font = `${isHover ? '11px' : '9px'} sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(loc.name, x, y - radius - 6);
+
+    if (loc.zone) {
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '7px sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText(loc.zone, x, y + radius + 4);
+    }
+  }
 }
 
 export function LocationMap({
@@ -46,131 +168,6 @@ export function LocationMap({
 
     drawMap(ctx, size, locations, hoveredId, selectedId);
   }, [locations, hoveredId, selectedId]);
-
-  const locById = new Map(locations.map((l) => [l.id, l]));
-  const locByName = new Map(locations.map((l) => [l.name, l]));
-
-  function resolveLoc(ref: string): Location | undefined {
-    return locById.get(ref) || locByName.get(ref);
-  }
-
-  const drawMap = (
-    ctx: CanvasRenderingContext2D,
-    size: number,
-    locs: Location[],
-    hoverId: string | null,
-    selId: string | null,
-  ) => {
-    ctx.clearRect(0, 0, size, size);
-
-    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size * 0.7);
-    grad.addColorStop(0, '#1a1a2e');
-    grad.addColorStop(1, '#0a0a12');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, size, size);
-
-    ctx.strokeStyle = '#1a1a2e';
-    ctx.lineWidth = 0.5;
-    for (let i = 0; i <= 10; i++) {
-      const p = (i / 10) * size;
-      ctx.beginPath();
-      ctx.moveTo(p, 0);
-      ctx.lineTo(p, size);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(0, p);
-      ctx.lineTo(size, p);
-      ctx.stroke();
-    }
-
-    for (const loc of locs) {
-      const from = loc;
-      const connIds = loc.connected_to || [];
-      for (const connRef of connIds) {
-        const to = resolveLoc(connRef);
-        if (!to) continue;
-
-        const x1 = from.x * size;
-        const y1 = from.y * size;
-        const x2 = to.x * size;
-        const y2 = to.y * size;
-
-        const bothUnlocked = from.is_unlocked && to.is_unlocked;
-
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.strokeStyle = bothUnlocked ? '#3a3a5a' : '#18182a';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-    }
-
-    for (const loc of locs) {
-      const x = loc.x * size;
-      const y = loc.y * size;
-      const isHover = hoverId === loc.id;
-      const isSel = selId === loc.id;
-      const isUnlocked = loc.is_unlocked;
-
-      if (!isUnlocked) {
-        ctx.fillStyle = 'rgba(0,0,0,0.75)';
-        ctx.beginPath();
-        ctx.arc(x, y, 18, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#4a4a5a';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.arc(x, y, 18, 0, Math.PI * 2);
-        ctx.stroke();
-
-        ctx.fillStyle = '#5a5a6a';
-        ctx.font = '11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('🔒', x, y);
-
-        ctx.fillStyle = '#6b7280';
-        ctx.font = `${isHover ? '10px' : '8px'} sans-serif`;
-        ctx.fillText(loc.name, x, y + 28);
-        continue;
-      }
-
-      if (isHover || isSel) {
-        ctx.shadowColor = '#6366f1';
-        ctx.shadowBlur = 20;
-      }
-
-      const radius = isHover || isSel ? 12 : 7;
-      ctx.fillStyle = isHover || isSel ? '#818cf8' : '#4f46e5';
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-
-      if (loc.is_starting_location) {
-        ctx.strokeStyle = '#22c55e';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
-      ctx.fillStyle = '#e4e4e7';
-      ctx.font = `${isHover ? '11px' : '9px'} sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(loc.name, x, y - radius - 6);
-
-      if (loc.zone) {
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '7px sans-serif';
-        ctx.textBaseline = 'top';
-        ctx.fillText(loc.zone, x, y + radius + 4);
-      }
-    }
-  };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
@@ -213,7 +210,9 @@ export function LocationMap({
     }
   };
 
-  const selectedLoc = selectedId ? locById.get(selectedId) : null;
+  const selectedLoc = selectedId
+    ? (locations.find((l) => l.id === selectedId) || locations.find((l) => l.name === selectedId) || null)
+    : null;
 
   return (
     <div className="location-map space-y-3">
@@ -254,12 +253,12 @@ export function LocationMap({
           </div>
           {selectedLoc.is_starting_location && (
             <div className="text-[var(--ok)] text-[10px] font-bold pt-1">
-              ● Starting Location
+              â— Starting Location
             </div>
           )}
           {!selectedLoc.is_unlocked && selectedLoc.unlock_reason_missing && (
             <div className="text-[var(--warn)] text-[10px] font-bold pt-1">
-              🔒 {selectedLoc.unlock_reason_missing}
+              đŸ”’ {selectedLoc.unlock_reason_missing}
             </div>
           )}
         </div>

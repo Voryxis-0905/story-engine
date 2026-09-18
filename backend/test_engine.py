@@ -15,6 +15,9 @@ from fastapi.testclient import TestClient
 from fastapi import HTTPException
 import main
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'tests'))
+from legacy_fixture import write_progression_fixture
+
 client = TestClient(main.app)
 WORLD = "test_engine_world"
 
@@ -232,17 +235,29 @@ check(len(world["chapters"]["chapters"]) == chapter_count_before_stuck,
       "hard reject: KHÔNG có chapter mới nào được ghi khi bị chặn (tránh mismatch text/state)")
 
 # ---------------------------------------------------------------------
-# 8. Consistency checker thật -- severity "major" phải kích hoạt narrator
-#    viết lại 1 lần, và response phải phản ánh đúng triggered_rewrite=True.
+# 8. Consistency checker that -- severity "major" phải kích hoạt narrator
+#    viết lại 1 lần, rồi BẮT BUỘC kiểm tra lại bản sửa (F07). Response
+#    phản ánh triggered_rewrite=True và status theo lần kiểm tra mới nhất.
 # ---------------------------------------------------------------------
+_consistency_8 = {"n": 0}
+
+
 def fake_call_llm_consistency_major(system_prompt, user_prompt, user_input_for_mock="", mock_response=None, world_name=None, role=None):
     import json
     if system_prompt == main.CONSISTENCY_CHECKER_SYSTEM_PROMPT:
+        _consistency_8["n"] += 1
+        if _consistency_8["n"] == 1:
+            return json.dumps({
+                "consistent": False,
+                "severity": "major",
+                "issues": ["mâu thuẫn giả lập để test rewrite"],
+                "explanation": "test"
+            }, ensure_ascii=False)
         return json.dumps({
-            "consistent": False,
-            "severity": "major",
-            "issues": ["mâu thuẫn giả lập để test rewrite"],
-            "explanation": "test"
+            "consistent": True,
+            "severity": "none",
+            "issues": [],
+            "explanation": "fixed"
         }, ensure_ascii=False)
     return json.dumps({
         "chapter_text": "Đoạn chapter test cho consistency checker.",
@@ -255,8 +270,9 @@ r = client.post(f"/worlds/{WORLD}/chapter/continue", json={"user_input": "hành 
 check(r.status_code == 200, "chapter/continue (consistency major) returned 200")
 body = r.json()
 cc = body["chapter"]["consistency_check"]
-check(cc["severity"] == "major", "consistency_check.severity = major được ghi nhận đúng")
+check(cc["status"] == "passed", "consistency_check.status = passed sau khi ban sua qua recheck")
 check(cc["triggered_rewrite"] is True, "consistency major -> triggered_rewrite = True (đã gọi lại narrator)")
+check(_consistency_8["n"] == 2, "checker được gọi 2 lần (lượt đầu + recheck bản sửa)")
 main.call_llm = original_call_llm
 
 # ---------------------------------------------------------------------
@@ -716,10 +732,12 @@ chapters_after2 = client.get(f"/worlds/{LLM_ERROR_WORLD}").json()["chapters"]["c
 check(len(chapters_after2) == len(chapters_before),
       "KHÔNG có chapter nào được ghi khi narrator lỗi thật (tránh state nửa vời)")
 
-# 17h. Consistency checker lỗi (LLMCallError, kể cả RateLimitError vì là
-# subclass) -> fail-open, KHÔNG chặn pipeline chính -- chapter vẫn được tạo
-# bình thường với severity "none" + explanation nói rõ checker không chạy
-# được (khác với "thật sự nhất quán").
+# 17h. (CAP NHAT F07) Consistency checker lỗi (LLMCallError, kể cả
+# RateLimitError vì là subclass) -> trạng thái "unavailable". Chính sách mặc
+# định MỚI: lượt chưa kiểm tra được giữ làm draft, KHÔNG commit (không tăng
+# tick, không áp hậu quả), API trả 503 kèm lời giải thích và đường thử lại.
+# Assertion cũ "200 + fail-open" đã bị đổi theo thiết kế F07; tác động tương
+# thích: world cũ muốn giữ fail-open đặt allow_unchecked_commit=true.
 def fake_call_llm_checker_fails(system_prompt, user_prompt, user_input_for_mock="", mock_response=None, world_name=None, role=None):
     if system_prompt == main.CONSISTENCY_CHECKER_SYSTEM_PROMPT:
         raise main.RateLimitError("giả lập checker gặp 429", retry_after=3)
@@ -729,11 +747,17 @@ def fake_call_llm_checker_fails(system_prompt, user_prompt, user_input_for_mock=
 main.call_llm = fake_call_llm_checker_fails
 r = client.post(f"/worlds/{LLM_ERROR_WORLD}/chapter/continue", json={"user_input": "test 2"})
 main.call_llm = original_call_llm
-check(r.status_code == 200, "chapter/continue vẫn returned 200 dù consistency checker gặp rate-limit thật (fail-open)")
-cc = r.json()["chapter"]["consistency_check"]
-check(cc["severity"] == "none", "checker lỗi -> fail-open về severity none, không chặn nhầm")
-check("CHECKER KHÔNG CHẠY ĐƯỢC" in cc["explanation"],
-      "explanation ghi rõ checker không chạy được (không giả vờ đã kiểm tra thật)")
+check(r.status_code == 503, "checker unavailable -> 503 (giu draft, khong commit)")
+detail17h = r.json()["detail"]
+check(detail17h.get("reason") == "consistency_checker_unavailable",
+      "detail17h. reason = consistency_checker_unavailable")
+check(detail17h.get("status") == "unavailable" and detail17h.get("persisted") is False,
+      "detail17h. trang thai unavailable va persisted=False")
+chapters_after_17h = client.get(f"/worlds/{LLM_ERROR_WORLD}").json()["chapters"]["chapters"]
+check(len(chapters_after_17h) == len(chapters_before),
+      "draft khong ghi chapter nao (khong tang tick/hau qua)")
+check(client.get(f"/worlds/{LLM_ERROR_WORLD}").json()["world_config"]["story_clock"]["tick"] == 0,
+      "draft khong tang tick")
 
 shutil.rmtree(wp5, ignore_errors=True)
 
@@ -1835,6 +1859,8 @@ if os.path.isdir(main.world_path_of(LINT_WORLD)): shutil.rmtree(main.world_path_
 client.post(f"/worlds/{LINT_WORLD}/seed-demo")
 original_call_llm_lint = main.call_llm
 def mock_call_llm_lint(sys_prompt, user_prompt, **kwargs):
+    if sys_prompt == main.CONSISTENCY_CHECKER_SYSTEM_PROMPT:
+        return main.mock_consistency_checker_response()
     if "Linter" in sys_prompt or "consistency errors" in sys_prompt:
         return '{"status": "has_issues", "issues": [{"severity": "major", "description": "test", "suggestion": "fix"}], "general_feedback": "test"}'
     if "rewrite a chapter" in sys_prompt:
@@ -2602,9 +2628,14 @@ def _37b_fake_call_llm(system_prompt, user_prompt, user_input_for_mock="", mock_
         return _j.dumps({"perception": "ok", "emotional_response": "neutral", "hedonic_delta": 0.0, "stress_delta": 0.0})
     if system_prompt == main.CONSISTENCY_CHECKER_SYSTEM_PROMPT:
         _37b_consistency_called["n"] += 1
+        if _37b_consistency_called["n"] == 1:
+            return _j.dumps({
+                "consistent": False, "severity": "major",
+                "issues": ["simulated consistency issue"], "explanation": "test"
+            }, ensure_ascii=False)
         return _j.dumps({
-            "consistent": False, "severity": "major",
-            "issues": ["simulated consistency issue"], "explanation": "test"
+            "consistent": True, "severity": "none",
+            "issues": [], "explanation": "fixed"
         }, ensure_ascii=False)
     _37b_writer["n"] += 1
     return _j.dumps({
@@ -2618,7 +2649,11 @@ r = client.post(f"/worlds/{WC_PLANNER}/chapter/continue", json={"user_input": "t
 check(r.status_code == 200, f"37b. chapter/continue returned {r.status_code}")
 check(_37b_planner["n"] == 1, f"37b. Planner called exactly 1 time (not {_37b_planner['n']}) during consistency-major retry")
 check(_37b_writer["n"] == 2, f"37b. Writer called exactly 2 times (initial + retry), got {_37b_writer['n']}")
-check(_37b_consistency_called["n"] == 1, f"37b. Consistency checker called exactly 1 time")
+check(_37b_consistency_called["n"] == 2,
+      f"37b. Consistency checker called twice (initial + recheck ban sua), got {_37b_consistency_called['n']}")
+_cc37b = r.json()["chapter"]["consistency_check"]
+check(_cc37b.get("status") == "passed", "37b. status=passed sau khi ban sua qua recheck")
+check(_cc37b.get("triggered_rewrite") is True, "37b. triggered_rewrite=True (da thu sua 1 lan)")
 main.call_llm = original_call_llm_37
 
 # clean up planner-count world
@@ -2640,9 +2675,7 @@ if os.path.isdir(wp_a2):
     shutil.rmtree(wp_a2)
 os.makedirs(wp_a2)
 
-DATA_SRC = os.path.join(main.BASE_DIR, "data", "worlds", "cyber_necro_detective")
-for _a2_file in ("canon_timeline.json", "character_state.json", "world_config.json", "card_registry.json"):
-    shutil.copy2(os.path.join(DATA_SRC, _a2_file), wp_a2)
+write_progression_fixture(wp_a2)
 
 # Set world to cp_0 with empty completed_checkpoints and sub_beats_progress
 _a2_wc = main.read_world_file(wp_a2, "world_config.json")
@@ -2760,9 +2793,7 @@ if os.path.isdir(wp_e1):
     shutil.rmtree(wp_e1)
 os.makedirs(wp_e1)
 
-DATA_SRC_E1 = os.path.join(main.BASE_DIR, "data", "worlds", "cyber_necro_detective")
-for _e1_file in ("canon_timeline.json", "character_state.json", "world_config.json", "card_registry.json"):
-    shutil.copy2(os.path.join(DATA_SRC_E1, _e1_file), wp_e1)
+write_progression_fixture(wp_e1)
 
 _e1_wc = main.read_world_file(wp_e1, "world_config.json")
 _e1_wc["current_checkpoint_id"] = "cp_3b_combat"
@@ -3119,9 +3150,7 @@ if os.path.isdir(wp_j5):
     shutil.rmtree(wp_j5)
 os.makedirs(wp_j5)
 
-DATA_SRC_J5 = os.path.join(main.BASE_DIR, "data", "worlds", "cyber_necro_detective")
-for _j5_file in ("canon_timeline.json", "character_state.json", "world_config.json", "card_registry.json"):
-    shutil.copy2(os.path.join(DATA_SRC_J5, _j5_file), wp_j5)
+write_progression_fixture(wp_j5)
 
 _j5_wc = main.read_world_file(wp_j5, "world_config.json")
 _j5_wc["current_checkpoint_id"] = "cp_0"

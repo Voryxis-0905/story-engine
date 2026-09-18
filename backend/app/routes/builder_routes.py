@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 from app.storage import (
     require_world, world_path_of, read_world_file, write_world_file,
     has_real_api_key, get_effective_model, read_world_runtime_override,
-    write_world_runtime_override
+    write_world_runtime_override, bump_world_revision, mark_builder_manual
 )
 from app.engine import (
     TEMPLATES, call_llm, parse_llm_json, make_card, make_checkpoint,
@@ -90,6 +90,180 @@ def world_builder_interview_respond(req: InterviewRespondRequest):
     return res
 
 
+def _default_world_events(world_path: str, cfg: dict, character_state: dict) -> int:
+    """Create valid background events for a freshly built world (idempotent).
+
+    Events are derived deterministically from the checkpoints/locations so a new
+    world actually has quests/events without another model call. Re-running never
+    duplicates them.
+    """
+    from app.world_events import load_world_events, save_world_events, validate_event_outcome
+    existing = load_world_events(world_path)
+    if existing.get("events"):
+        return 0
+
+    canon = read_world_file(world_path, "canon_timeline.json")
+    checkpoints = [cp for cp in canon.get("checkpoints", []) if isinstance(cp, dict)]
+    characters = character_state.get("characters", {}) if isinstance(character_state, dict) else {}
+    protagonist = cfg.get("protagonist_id", "")
+    organizer = next(
+        (cid for cid in characters if cid != protagonist and characters[cid].get("alive", True)),
+        "",
+    )
+    events = []
+    for index, cp in enumerate(checkpoints):
+        cp_id = cp.get("checkpoint_id") or f"cp_{index}"
+        boundary_locations = (cp.get("boundary") or {}).get("locations", [])
+        location_id = boundary_locations[0] if boundary_locations else ""
+        description = cp.get("description") or f"Checkpoint {cp_id}"
+        trigger = cp.get("required_conditions") or [
+            {"field": "story_clock.tick", "op": ">=", "value": index + 1}
+        ]
+        outcomes = [
+            {"outcome_id": f"{cp_id}_happens", "resolution": "resolved",
+             "canon_facts_add": [f"{description} unfolds."]},
+            {"outcome_id": f"{cp_id}_missed", "resolution": "missed"},
+        ]
+        if organizer:
+            outcomes.insert(1, {"outcome_id": f"{cp_id}_prevented", "resolution": "prevented",
+                                "canon_facts_add": [f"The plan at {description} was stopped."]})
+        event = {
+            "event_id": f"ev_{cp_id}",
+            "event_class": "organized",
+            "organizer_id": organizer or None,
+            "location_id": location_id or None,
+            "status": "pending",
+            "discoverable_from_start": index == 0,
+            "trigger_conditions": trigger,
+            "outcomes": [o for o in outcomes if not validate_event_outcome(o)],
+        }
+        if event["outcomes"]:
+            events.append(event)
+
+    if not events:
+        return 0
+    save_world_events(world_path, {"events": events})
+    return len(events)
+
+
+@router.get("/worlds/{world_name}/builder/status")
+def builder_status(world_name: str):
+    """Draft/resume cursor: where the build stopped and what already exists."""
+    world_path = require_world(world_name)
+    cfg = read_world_file(world_path, "world_config.json")
+    status = cfg.get("creation_status", "complete")
+    order = ["skeleton", "checkpoint_review", "cards", "characters", "complete"]
+    index = order.index(status) if status in order else len(order) - 1
+    from app.world_events import load_world_events
+    return {
+        "creation_status": status,
+        "next_step": order[index + 1] if index + 1 < len(order) else None,
+        "steps_done": order[:index + 1],
+        "has_checkpoints": bool(read_world_file(world_path, "canon_timeline.json").get("checkpoints")),
+        "has_cards": bool(read_world_file(world_path, "card_registry.json").get("cards")),
+        "has_characters": bool(read_world_file(world_path, "character_state.json").get("characters")),
+        "has_events": bool(load_world_events(world_path).get("events")),
+    }
+
+
+@router.post("/worlds/{world_name}/builder/events")
+def builder_generate_events(world_name: str):
+    """Generate/ensure background events for the world draft (idempotent)."""
+    world_path = require_world(world_name)
+    cfg = read_world_file(world_path, "world_config.json")
+    character_state = read_world_file(world_path, "character_state.json")
+    created = _default_world_events(world_path, cfg, character_state)
+    if created:
+        bump_world_revision(world_path)
+    return {"status": "ok", "events_created": created}
+
+
+# Builder steps that own an artifact a creator may have edited by hand.
+_BUILDER_MANUAL_STEPS = ("skeleton", "cards", "characters", "events")
+_CONCEPT_STEPS = ("skeleton", "cards", "characters", "events")
+
+
+def _builder_meta(cfg: dict) -> dict:
+    builder = cfg.get("builder")
+    if not isinstance(builder, dict):
+        builder = {}
+    builder.setdefault("concept", cfg.get("narrative_scope_note", ""))
+    builder.setdefault("scope_type", cfg.get("scope_selector", "arc-only"))
+    manual = builder.get("manual_steps")
+    builder["manual_steps"] = manual if isinstance(manual, list) else []
+    stale = builder.get("stale_steps")
+    builder["stale_steps"] = stale if isinstance(stale, list) else []
+    return builder
+
+
+@router.post("/worlds/{world_name}/builder/replan")
+def builder_replan(world_name: str, req: dict = None):
+    """Preview what a concept change would regenerate, without overwriting.
+
+    Returns the plan only. Hand-edited steps are preserved; the new concept is
+    stored as pending until the creator explicitly applies it.
+    """
+    world_path = require_world(world_name)
+    cfg = read_world_file(world_path, "world_config.json")
+    builder = _builder_meta(cfg)
+    new_concept = str((req or {}).get("concept", "")).strip()
+    if not new_concept:
+        raise HTTPException(status_code=400, detail="concept is required")
+
+    manual = set(builder.get("manual_steps", []))
+    # A concept change invalidates the whole authored spine; steps a creator
+    # edited by hand are reported as preserved and never regenerated silently.
+    regenerate = [step for step in _CONCEPT_STEPS if step not in manual]
+    preserved = [step for step in _CONCEPT_STEPS if step in manual]
+
+    builder["concept_pending"] = new_concept
+    cfg["builder"] = builder
+    write_world_file(world_path, "world_config.json", cfg)
+
+    return {
+        "preview": True,
+        "concept": {"from": builder.get("concept", ""), "to": new_concept},
+        "regenerate_steps": regenerate,
+        "preserved_steps": preserved,
+        "requires_confirmation": True,
+        "note": "Apply to move the draft back to the first step that needs regeneration. "
+                "Preserved steps are skipped so manual edits are not overwritten.",
+    }
+
+
+@router.post("/worlds/{world_name}/builder/apply-replan")
+def builder_apply_replan(world_name: str, req: dict = None):
+    """Apply a pending concept change: reset only the stale, non-manual steps."""
+    world_path = require_world(world_name)
+    cfg = read_world_file(world_path, "world_config.json")
+    builder = _builder_meta(cfg)
+    pending = builder.get("concept_pending")
+    if not pending:
+        raise HTTPException(status_code=400, detail="No pending concept change to apply")
+
+    manual = set(builder.get("manual_steps", []))
+    regenerate = [step for step in _CONCEPT_STEPS if step not in manual]
+    preserve = [step for step in _CONCEPT_STEPS if step in manual]
+
+    builder["concept"] = pending
+    builder["concept_pending"] = None
+    builder["stale_steps"] = regenerate
+    cfg["builder"] = builder
+    cfg["narrative_scope_note"] = pending
+
+    # Only move the build cursor back when the first authored step must be redone.
+    if "skeleton" in regenerate:
+        cfg["creation_status"] = "skeleton"
+    write_world_file(world_path, "world_config.json", cfg)
+
+    return {
+        "applied": True,
+        "regenerate_steps": regenerate,
+        "preserved_steps": preserve,
+        "creation_status": cfg.get("creation_status", "complete"),
+    }
+
+
 @router.post("/worlds/{world_name}/builder/confirm-checkpoints")
 def confirm_checkpoints(world_name: str):
     world_path = require_world(world_name)
@@ -102,6 +276,7 @@ def confirm_checkpoints(world_name: str):
         raise HTTPException(status_code=400, detail="Cannot confirm empty checkpoints timeline")
     cfg["creation_status"] = "cards"
     write_world_file(world_path, "world_config.json", cfg)
+    bump_world_revision(world_path)
     return {"status": "cards"}
 
 
@@ -129,6 +304,20 @@ def world_builder_step(world_name: str):
             detail=f"creation_status '{status}' is invalid or the world is already created. "
                    f"Only supports: skeleton, cards, characters."
         )
+
+    # A concept replan must not overwrite a step the creator edited by hand:
+    # skip it and advance the cursor.
+    manual_steps = cfg.get("builder", {}).get("manual_steps", []) if isinstance(cfg.get("builder"), dict) else []
+    if status in manual_steps:
+        next_status = {"skeleton": "checkpoint_review", "cards": "characters",
+                       "characters": "complete"}.get(status)
+        if next_status == "complete":
+            character_state = read_world_file(world_path, "character_state.json")
+            _default_world_events(world_path, cfg, character_state)
+        if next_status:
+            cfg["creation_status"] = next_status
+            write_world_file(world_path, "world_config.json", cfg)
+            return {"status": next_status, "kept_manual": True}
 
     prompt = cfg.get("narrative_scope_note", "")
     scope = cfg.get("scope_selector", "arc-only")
@@ -182,6 +371,7 @@ def world_builder_step(world_name: str):
 
             new_cfg["creation_status"] = "checkpoint_review"
             write_world_file(world_path, "world_config.json", new_cfg)
+            bump_world_revision(world_path)
 
             return {"status": "checkpoint_review"}
 
@@ -256,6 +446,7 @@ def world_builder_step(world_name: str):
 
             cfg["creation_status"] = "characters"
             write_world_file(world_path, "world_config.json", cfg)
+            bump_world_revision(world_path)
 
             return {"status": "characters", "fixed_cards": invalid_card_ids if invalid_card_ids else None}
 
@@ -329,6 +520,7 @@ def world_builder_step(world_name: str):
 
             cfg["creation_status"] = "complete"
             write_world_file(world_path, "world_config.json", cfg)
+            bump_world_revision(world_path)
 
             # Generate location map after world creation is complete
             try:
@@ -343,6 +535,14 @@ def world_builder_step(world_name: str):
                     write_world_file(world_path, "location_map.json", location_map)
             except Exception:
                 logger.warning("Location map generation failed for world '%s', skipping", world_name)
+
+            # Background events: derived from checkpoints/locations so the new
+            # world has quests immediately. Idempotent across retries.
+            events_created = 0
+            try:
+                events_created = _default_world_events(world_path, cfg, char_state)
+            except Exception as e:
+                logger.warning("Default world events generation failed for '%s': %s", world_name, e)
 
             # Checkpoint linter: validate generated bundle structure (deterministic, no LLM)
             try:
@@ -388,6 +588,7 @@ def world_builder_step(world_name: str):
                 "status": "complete",
                 "sanitized_conditions": sanitize_result if removed_any else None,
                 "lint_errors": lint_errors if lint_errors else None,
+                "events_created": events_created,
             }
 
     except RateLimitError as e:
@@ -478,6 +679,7 @@ def extend_arc(world_name: str):
         current_cps.extend(normalized_new_cps)
         canon["checkpoints"] = current_cps
         write_world_file(world_path, "canon_timeline.json", canon)
+        bump_world_revision(world_path)
 
         lint_errors = []
         try:
