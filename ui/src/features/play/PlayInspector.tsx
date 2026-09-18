@@ -7,9 +7,9 @@ import { LocationMap } from '../../components/LocationMap';
 // Codex drawer is opened.
 const CodexGraph = lazy(() => import('../../components/CodexGraph').then((m) => ({ default: m.CodexGraph })));
 
-type Props = Pick<PlaySession, 'playState' | 'activeDrawer' | 'setActiveDrawer' | 'locations' | 'affinityGraph' | 'protagonist' | 'quests' | 'journal'>;
+type Props = Pick<PlaySession, 'playState' | 'activeDrawer' | 'setActiveDrawer' | 'locations' | 'affinityGraph' | 'protagonist' | 'quests' | 'journal' | 'handleTravelTo'>;
 
-export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locations, affinityGraph, protagonist, quests, journal }: Props) {
+export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locations, affinityGraph, protagonist, quests, journal, handleTravelTo }: Props) {
   return (<>
       {/* RIGHT ICON STRIP & SLIDE-IN DRAWERS */}
       <div className="flex z-20 h-full shrink-0">
@@ -40,16 +40,30 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
               {/* 1. Inventory Drawer */}
               {activeDrawer === 'inventory' && (
                 <div className="space-y-3">
-                  {playState?.unlocked_cards?.filter((c: any) => c.type === 'item').length === 0 ? (
+                  {!protagonist?.inventory?.length ? (
                     <p className="text-xs font-bold text-[var(--ink-soft)] text-center py-6">No items in inventory.</p>
                   ) : (
-                    playState?.unlocked_cards?.filter((c: any) => c.type === 'item').map((item: any) => (
-                      <div key={item.id} className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--line)] shadow-sm space-y-1.5">
+                    protagonist.inventory.map((item: any) => (
+                      <div key={item.instance_id} className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--line)] shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-[15px] text-[var(--ink-main)]">{item.name}</span>
-                          <span className="px-2 py-0.5 rounded-full font-mono text-[10px] font-bold bg-[var(--bg-subtle)] text-[var(--accent-sage)] border border-[var(--line)]">{item.rarity || 'Common'}</span>
+                          <span className="px-2 py-0.5 rounded-full font-mono text-[10px] font-bold bg-[var(--bg-subtle)] text-[var(--accent-sage)] border border-[var(--line)]">{item.quantity > 1 ? `×${item.quantity}` : item.category}</span>
                         </div>
-                        <p className="text-[13px] text-[var(--ink-soft)] font-medium leading-relaxed">{item.content}</p>
+                        {item.description && <p className="text-[13px] text-[var(--ink-soft)] leading-relaxed">{item.description}</p>}
+                        {Object.keys(item.attributes || {}).length > 0 && (
+                          <div className="grid grid-cols-2 gap-1 text-[11px] font-mono">
+                            {Object.entries(item.attributes).map(([key, value]) => <div key={key}><span className="text-[var(--ink-faint)]">{key}:</span> {String(value)}</div>)}
+                          </div>
+                        )}
+                        {(item.abilities || []).map((ability: any, index: number) => (
+                          <div key={ability.name || index} className="rounded-lg border border-[var(--line)] bg-[var(--bg-subtle)] p-2 text-[11px]">
+                            <div className="font-bold text-[var(--periwinkle-dark)]">{ability.name || String(ability)}</div>
+                            {ability.effect && <div className="text-[var(--ink-soft)]">{ability.effect}</div>}
+                          </div>
+                        ))}
+                        <div className="flex gap-2 text-[10px] font-mono text-[var(--ink-faint)]">
+                          <span>{item.condition}</span>{item.equipped && <span>equipped</span>}{item.charges !== null && item.charges !== undefined && <span>{item.charges} charges</span>}
+                        </div>
                       </div>
                     ))
                   )}
@@ -59,7 +73,7 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
               {/* 2. Map Drawer */}
               {activeDrawer === 'map' && (
                 <div className="space-y-4">
-                  <LocationMap locations={locations} />
+                  <LocationMap locations={locations} currentLocation={protagonist?.location} onTravel={handleTravelTo} />
                 </div>
               )}
 

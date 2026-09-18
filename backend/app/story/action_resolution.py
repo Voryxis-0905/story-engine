@@ -33,8 +33,9 @@ def _access_ok(location: str, checkpoint: dict) -> bool:
 
 
 def _inventory(character: dict) -> set:
+    from app.story.inventory import item_key
     items = character.get("inventory", [])
-    return {str(item).strip().lower() for item in items if isinstance(item, str)}
+    return {item_key(item) for item in items if item_key(item)}
 
 
 def _skills(character: dict) -> set:

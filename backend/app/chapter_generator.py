@@ -306,6 +306,29 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         action_id=f"act_{current_checkpoint_id}_{story_clock.get('tick', 0)}",
     )
 
+    from app.world.travel import build_travel_plan
+    travel_resolution = build_travel_plan(
+        narrator_input, location_map or {}, scene_location,
+        tick_minutes=int(world_config.get("travel_tick_minutes", 60) or 60),
+        seed_key=f"{world_name}|{story_clock.get('tick', 0)}",
+    )
+    if travel_resolution and travel_resolution.get("status") == "arrived":
+        attempted = {"characters": {protagonist_id: {
+            "location": travel_resolution.get("destination", "")
+        }}}
+        travel_violations = (
+            check_boundary_violations(attempted, checkpoint)
+            + check_map_based_restrictions(
+                attempted, location_map, character_state.get("characters", {}), world_config
+            )
+        )
+        if travel_violations:
+            travel_resolution.update(
+                status="blocked", reason="destination_locked",
+                elapsed_minutes=0, tick_advance=1,
+                violations=travel_violations,
+            )
+
     base_payload = {
         "world_canon_facts": world_canon_facts,
         # Per-subject knowledge (what each active character believes, with source
@@ -317,6 +340,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         # Engine-committed outcome of the player's action. The writer must narrate
         # this result, never a different one.
         "action_resolution": action_resolution,
+        "travel_resolution": travel_resolution,
         "world_config": {
             "genre": world_config.get("genre", ""),
             "story_thesis": world_config.get("story_thesis", ""),
@@ -528,6 +552,19 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             }
         )
 
+    # The model narrates travel but cannot override the engine-owned destination
+    # or elapsed time. A blocked route always leaves the protagonist in place.
+    if travel_resolution:
+        protagonist_changes = state_changes.setdefault("characters", {}).setdefault(protagonist_id, {})
+        if travel_resolution.get("status") in ("arrived", "interrupted"):
+            protagonist_changes["location"] = (
+                travel_resolution.get("destination") if travel_resolution.get("status") == "arrived"
+                else travel_resolution.get("stopped_at", scene_location)
+            )
+        else:
+            protagonist_changes.pop("location", None)
+        state_changes.pop("story_clock_delta", None)
+
     character_state["characters"] = apply_state_changes(
         character_state["characters"], state_changes,
         trait_definitions=world_config.get("trait_definitions"),
@@ -538,6 +575,9 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     )
 
     world_config["story_clock"] = story_clock
+    if travel_resolution and travel_resolution.get("status") in ("arrived", "interrupted"):
+        from app.world.travel import advance_clock_minutes
+        advance_clock_minutes(story_clock, int(travel_resolution.get("elapsed_minutes", 0) or 0))
     world_config["foreshadowing_tracker"] = foreshadowing_tracker
 
     open_threads = world_config.get("open_threads", [])
@@ -624,6 +664,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "boundary_correction": boundary_correction,
         "psychology_status": psychology_status,
         "action_resolution": action_resolution,
+        "travel_resolution": travel_resolution,
         "consistency_check": {
             "status": checker_result["status"],
             "severity": checker_result["severity"],
@@ -674,7 +715,9 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
 
     # Resolve against the final turn clock, then commit consequences with the turn.
     # The engine owns logical turns; model-generated calendar time is independent.
-    story_clock["tick"] = turn_start_tick + 1
+    story_clock["tick"] = turn_start_tick + int(
+        travel_resolution.get("tick_advance", 1) if travel_resolution else 1
+    )
     from app.world_events import tick_world_events, load_world_events
     world_events = load_world_events(world_path)
     resolved = tick_world_events(

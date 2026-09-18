@@ -257,15 +257,14 @@ def _apply_outcome_payload(character_state: dict, payload: dict, world_config: d
     for item in payload.get("inventory_add", []):
         for char in character_state.values():
             if isinstance(char, dict):
-                inv = char.setdefault("inventory", [])
-                if item not in inv:
-                    inv.append(item)
+                from app.story.inventory import add_inventory_item
+                add_inventory_item(char.setdefault("inventory", []), item)
 
     for item in payload.get("inventory_remove", []):
         for char in character_state.values():
             if isinstance(char, dict) and "inventory" in char:
-                if item in char["inventory"]:
-                    char["inventory"].remove(item)
+                from app.story.inventory import remove_inventory_item
+                remove_inventory_item(char["inventory"], item)
 
     app_append = payload.get("appearance_append")
     if app_append:
@@ -324,13 +323,17 @@ def apply_state_changes(characters: dict, state_changes: dict,
             if flag not in char["knowledge_flags"]:
                 char["knowledge_flags"].append(flag)
 
+        from app.story.inventory import add_inventory_item, remove_inventory_item
         for item in changes.get("inventory_add", []):
-            if item not in char.get("inventory", []):
-                char.setdefault("inventory", []).append(item)
+            if isinstance(item, dict):
+                item = dict(item)
+                item.setdefault("acquired_at_tick", (story_clock or {}).get("tick"))
+                item.setdefault("acquired_from", char.get("location"))
+            add_inventory_item(char.setdefault("inventory", []), item)
 
         for item in changes.get("inventory_remove", []):
-            if "inventory" in char and item in char["inventory"]:
-                char["inventory"].remove(item)
+            if "inventory" in char:
+                remove_inventory_item(char["inventory"], item)
 
         if changes.get("karma_delta"):
             char["karma"] = char.get("karma", 0) + changes["karma_delta"]

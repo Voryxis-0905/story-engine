@@ -226,7 +226,7 @@ RULES:
    - "unlock_exp": The minimum EXP required to enter this location (0 if no restriction)
    - "unlock_checkpoint_id": The checkpoint ID that unlocks this location, or null if available from start
    - "is_starting_location": true if this is where the protagonist begins, false otherwise
-   - "connected_to": Array of location IDs that are directly connected/pathable to this one
+   - "connected_to": Array of location IDs, or edge objects such as {"to": "loc_forest", "travel_time_minutes": 90, "danger": 0.25, "tags": ["forest_path"]}. Prefer edge objects when travel time is known.
    - "tags": Array of tag strings (e.g. ["safe", "urban", "shop"] or ["dangerous", "wilderness", "combat"])
 
 4. IMPORTANT — Use zone-prefixed naming consistent with the checkpoint boundary.locations. For example, if a checkpoint has boundary.locations containing "Valdris Estate", create location nodes like "Valdris Estate - Manor", "Valdris Estate - Garden", etc.

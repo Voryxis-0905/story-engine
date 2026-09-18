@@ -159,6 +159,151 @@ class ReliabilityTests(unittest.TestCase):
                 self.assertEqual(status['is_unlocked'], not violations)
                 self.assertEqual(status['is_unlocked'], unlocked)
 
+    def test_structured_inventory_is_exposed_and_legacy_items_still_work(self):
+        characters = self.read('character_state.json')
+        hero = characters['characters']['char_xueli']
+        hero['inventory'] = [
+            'Old key',
+            {
+                'instance_id': 'inv_moon_blade', 'name': 'Moon Blade',
+                'category': 'weapon', 'description': 'A cold silver blade.',
+                'attributes': {'damage': 7, 'weight': 'light'},
+                'abilities': [{'name': 'Moon Cut', 'effect': 'Cuts spectral bindings.'}],
+                'tags': ['silver'], 'quantity': 1, 'condition': 'worn',
+            },
+        ]
+        self.write('character_state.json', characters)
+        state = self.client.get(f'/worlds/{self.world}/play-state')
+        self.assertEqual(state.status_code, 200, state.text)
+        inventory = state.json()['protagonist']['inventory']
+        self.assertEqual([item['name'] for item in inventory], ['Old key', 'Moon Blade'])
+        self.assertEqual(inventory[1]['attributes']['damage'], 7)
+        self.assertEqual(inventory[1]['abilities'][0]['name'], 'Moon Cut')
+
+    def test_structured_item_acquisition_replaces_legacy_stub_and_tracks_origin(self):
+        from app.state_manager import apply_state_changes
+        characters = self.read('character_state.json')['characters']
+        hero = characters['char_xueli']
+        hero['location'] = 'Moon Vault'
+        hero['inventory'] = ['Moon Key']
+        apply_state_changes(characters, {'characters': {'char_xueli': {
+            'inventory_add': [{
+                'name': 'Moon Key', 'category': 'key_item',
+                'description': 'A silver key etched with a crescent.',
+                'attributes': {'material': 'moon silver'},
+                'abilities': [{'name': 'Open Moon Gate', 'effect': 'Opens lunar seals.'}],
+            }],
+        }}}, story_clock={'tick': 12})
+        item = hero['inventory'][0]
+        self.assertIsInstance(item, dict)
+        self.assertEqual(item['description'], 'A silver key etched with a crescent.')
+        self.assertEqual(item['acquired_at_tick'], 12)
+        self.assertEqual(item['acquired_from'], 'Moon Vault')
+
+        apply_state_changes(characters, {'characters': {'char_xueli': {
+            'inventory_remove': ['Moon Key'],
+        }}})
+        self.assertEqual(hero['inventory'], [])
+
+    def test_travel_turn_commits_route_location_and_elapsed_clock(self):
+        config = self.read('world_config.json')
+        config['story_clock'].update(tick=0, day=1, time_of_day='morning')
+        self.write('world_config.json', config)
+        characters = self.read('character_state.json')
+        characters['characters']['char_xueli']['location'] = 'Village'
+        self.write('character_state.json', characters)
+        timeline = self.read('canon_timeline.json')
+        current = next(cp for cp in timeline['checkpoints']
+                       if cp['checkpoint_id'] == config['current_checkpoint_id'])
+        current['boundary']['locations'] = ['Village', 'Forest']
+        self.write('canon_timeline.json', timeline)
+        self.write('location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village', 'x': 10, 'y': 10,
+             'connected_to': [{'to': 'forest', 'travel_time_minutes': 150}]},
+            {'id': 'forest', 'name': 'Forest', 'x': 40, 'y': 10,
+             'connected_to': ['village']},
+        ]})
+
+        response = self.post('chapter/continue', {'user_input': 'Travel to Forest.'})
+        self.assertEqual(response.status_code, 200, response.text)
+        travel = response.json()['chapter']['travel_resolution']
+        self.assertEqual(travel['status'], 'arrived')
+        self.assertEqual(travel['route'], ['Village', 'Forest'])
+        self.assertEqual(travel['elapsed_minutes'], 150)
+        self.assertEqual(self.read('character_state.json')['characters']['char_xueli']['location'], 'Forest')
+        clock = self.read('world_config.json')['story_clock']
+        self.assertEqual(clock['elapsed_minutes'], 150)
+        self.assertEqual(clock['minute_of_day'], 630)
+        self.assertEqual(clock['tick'], 3)
+
+    def test_travel_without_connected_route_is_blocked_without_moving_or_time_skip(self):
+        characters = self.read('character_state.json')
+        characters['characters']['char_xueli']['location'] = 'Village'
+        self.write('character_state.json', characters)
+        timeline = self.read('canon_timeline.json')
+        current_id = self.read('world_config.json')['current_checkpoint_id']
+        current = next(cp for cp in timeline['checkpoints'] if cp['checkpoint_id'] == current_id)
+        current['boundary']['locations'] = ['Village', 'Island']
+        self.write('canon_timeline.json', timeline)
+        self.write('location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village', 'x': 10, 'y': 10, 'connected_to': []},
+            {'id': 'island', 'name': 'Island', 'x': 80, 'y': 80, 'connected_to': []},
+        ]})
+        response = self.post('chapter/continue', {'user_input': 'Travel to Island.'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['chapter']['travel_resolution']['status'], 'blocked')
+        self.assertEqual(self.read('character_state.json')['characters']['char_xueli']['location'], 'Village')
+        self.assertEqual(self.read('world_config.json')['story_clock'].get('elapsed_minutes', 0), 0)
+
+    def test_map_status_exposes_route_and_disables_unreachable_destination(self):
+        characters = self.read('character_state.json')
+        characters['characters']['char_xueli']['location'] = 'Village'
+        self.write('character_state.json', characters)
+        self.write('location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village', 'x': 10, 'y': 10,
+             'connected_to': ['forest']},
+            {'id': 'forest', 'name': 'Forest', 'x': 40, 'y': 10,
+             'connected_to': ['village']},
+            {'id': 'island', 'name': 'Island', 'x': 80, 'y': 80,
+             'connected_to': []},
+        ]})
+        response = self.client.get(f'/worlds/{self.world}/location-map/status')
+        self.assertEqual(response.status_code, 200, response.text)
+        locations = {item['id']: item for item in response.json()['locations']}
+        self.assertTrue(locations['forest']['is_unlocked'])
+        self.assertTrue(locations['forest']['is_reachable'])
+        self.assertEqual(locations['forest']['route_preview'], ['Village', 'Forest'])
+        self.assertFalse(locations['island']['is_unlocked'])
+        self.assertFalse(locations['island']['is_reachable'])
+        self.assertIn('Không có tuyến đường', locations['island']['unlock_reason_missing'])
+
+    def test_dangerous_travel_can_interrupt_and_still_advance_time(self):
+        config = self.read('world_config.json')
+        config['story_clock'].update(tick=0, day=1, time_of_day='morning')
+        self.write('world_config.json', config)
+        characters = self.read('character_state.json')
+        characters['characters']['char_xueli']['location'] = 'Village'
+        self.write('character_state.json', characters)
+        timeline = self.read('canon_timeline.json')
+        current = next(cp for cp in timeline['checkpoints'] if cp['checkpoint_id'] == config['current_checkpoint_id'])
+        current['boundary']['locations'] = ['Village', 'Forest']
+        self.write('canon_timeline.json', timeline)
+        self.write('location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village', 'x': 10, 'y': 10,
+             'connected_to': [{'to': 'forest', 'travel_time_minutes': 120,
+                               'danger': 1.0, 'tags': ['bandit_road']}]},
+            {'id': 'forest', 'name': 'Forest', 'x': 40, 'y': 10, 'connected_to': ['village']},
+        ]})
+        response = self.post('chapter/continue', {'user_input': 'Travel to Forest.'})
+        self.assertEqual(response.status_code, 200, response.text)
+        travel = response.json()['chapter']['travel_resolution']
+        self.assertEqual(travel['status'], 'interrupted')
+        self.assertEqual(travel['stopped_at'], 'Village')
+        self.assertEqual(travel['interrupted_leg']['tags'], ['bandit_road'])
+        self.assertEqual(travel['elapsed_minutes'], 60)
+        self.assertEqual(self.read('character_state.json')['characters']['char_xueli']['location'], 'Village')
+        self.assertEqual(self.read('world_config.json')['story_clock']['elapsed_minutes'], 60)
+
     def test_codex_returns_unlocked_cards_without_npc_private_state(self):
         characters = self.read('character_state.json')
         protagonist = characters['characters']['char_xueli']

@@ -18,6 +18,7 @@ from app.models import (
     RewriteChapterRequest, RegenerateRequest
 )
 from app.persistence import commit_world_files, locked_world
+from app.story.inventory import inventory_view
 
 try:
     from prompts import LINTER_SYSTEM_PROMPT as _LSP
@@ -285,6 +286,7 @@ def get_play_state(world_name: str):
             "power_stat": p.get("power_stat", {}),
             "traits": p.get("traits", {}),
             "knowledge_flags": p.get("knowledge_flags", []),
+            "inventory": inventory_view(p.get("inventory", []), owner_id=protagonist_id),
             "knowledge": project_knowledge_for_subject(
                 character_state["characters"], protagonist_id, canon_facts
             ),

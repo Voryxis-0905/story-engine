@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from app.storage import require_world, read_world_file
 from app.checkpoint_engine import check_map_based_restrictions
 from app.story.views import player_character_view
+from app.world.travel import find_location, find_route
 
 try:
     from skill_limiter import check_skill_limiter
@@ -67,6 +68,8 @@ def get_world_location_map_status(world_name: str):
     main_char_id = world_config.get("protagonist_id") or world_config.get("main_character_id", "")
     main_char = characters.get(main_char_id, {})
     locations = location_map.get("locations", [])
+    current_location = main_char.get("location", "")
+    current_on_map = find_location(location_map, current_location)
     enriched = []
     for loc in locations:
         loc_id = loc.get("id", "")
@@ -76,7 +79,9 @@ def get_world_location_map_status(world_name: str):
             {"characters": {main_char_id: {"location": location_name}}},
             {"locations": [loc]}, {main_char_id: main_char}, world_config
         )
-        is_unlocked = not violations
+        route = find_route(location_map, current_location, loc_id or location_name) if current_on_map else None
+        is_reachable = route is not None if current_on_map else True
+        is_unlocked = not violations and is_reachable
         reasons = []
         for violation in violations:
             if violation["reason"] == "exp":
@@ -85,10 +90,14 @@ def get_world_location_map_status(world_name: str):
                 reasons.append(f"Cần đạt {violation['required']}")
             else:
                 reasons.append(f"Cần tới mốc {violation['required']}")
+        if not is_reachable:
+            reasons.append("Không có tuyến đường nối từ vị trí hiện tại")
 
         enriched.append({
             **loc,
             "is_unlocked": is_unlocked,
+            "is_reachable": is_reachable,
+            "route_preview": [item.get("name") or item.get("id") for item in route] if route else [],
             "unlock_reason_missing": "; ".join(reasons) if reasons else None,
         })
 

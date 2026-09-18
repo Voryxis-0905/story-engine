@@ -338,6 +338,13 @@ export function usePlaySession(worldName: string) {
     return submitAction(text, { clearInputOnSuccess: true, requestId });
   };
 
+  const handleTravelTo = (location: { name?: string; id?: string }) => {
+    const destination = location?.name || location?.id;
+    if (!destination) return;
+    setInput(`Travel to ${destination}.`);
+    setActiveDrawer(null);
+  };
+
   const handleRetryDraft = () => {
     if (!draft) return;
     // Resend the action that produced the draft, regardless of what the player
@@ -519,7 +526,7 @@ export function usePlaySession(worldName: string) {
   const clock = playState?.story_clock || {};
 
 
-  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock };
+  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handleTravelTo, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock };
 }
 
 export type PlaySession = ReturnType<typeof usePlaySession>;

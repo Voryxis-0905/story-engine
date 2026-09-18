@@ -22,6 +22,7 @@ export interface PlayState {
     power_stat: Record<string, any>;
     traits: Record<string, any>;
     knowledge_flags: string[];
+    inventory: InventoryItem[];
     alive: boolean;
     relationships: Record<string, any>;
     age: string;
@@ -41,6 +42,23 @@ export interface PlayState {
   lifecycle_status?: string;
   story_mode?: string;
   epilogue?: { text: string; chosen_choice?: string } | null;
+}
+
+export interface InventoryItem {
+  instance_id: string;
+  item_id?: string | null;
+  name: string;
+  category: string;
+  description: string;
+  attributes: Record<string, any>;
+  abilities: Array<Record<string, any> | string>;
+  tags: string[];
+  quantity: number;
+  condition: string;
+  equipped: boolean;
+  charges?: number | null;
+  acquired_at_tick?: number | null;
+  acquired_from?: string | null;
 }
 
 export interface ChapterContinueResponse {

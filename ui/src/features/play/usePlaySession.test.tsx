@@ -25,7 +25,7 @@ const api = mocks.api;
 
 function playState(overrides: Record<string, any> = {}) {
   return {
-    protagonist: { id: 'char_xueli', name: 'Xueli', location: 'Sect', power_stat: {}, traits: {}, knowledge_flags: [], alive: true, relationships: {}, age: '' },
+    protagonist: { id: 'char_xueli', name: 'Xueli', location: 'Sect', power_stat: {}, traits: {}, knowledge_flags: [], inventory: [], alive: true, relationships: {}, age: '' },
     arc_progress: { current_checkpoint_id: 'cp_0', current_index: 0, total_checkpoints: 1, completed: [] },
     unlocked_cards: [],
     story_clock: {},
@@ -62,6 +62,15 @@ function render(world = 'WorldA') {
 }
 
 describe('usePlaySession input/retry loop', () => {
+  it('turns a map destination into an editable travel intent', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+    act(() => result.current.handleTravelTo({ id: 'forest', name: 'Old Forest' }));
+    expect(result.current.input).toBe('Travel to Old Forest.');
+    expect(result.current.activeDrawer).toBeNull();
+    expect(api.play.continue).not.toHaveBeenCalled();
+  });
+
   it('keeps the typed input when a send fails and retries exactly once', async () => {
     const { result } = render();
     await waitFor(() => expect(api.play.state).toHaveBeenCalled());

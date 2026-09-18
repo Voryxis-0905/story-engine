@@ -144,8 +144,8 @@ class CharacterStateChange(BaseModel):
     sub_stats_delta: Dict[str, int] = {}
     exp_delta: int = 0
     knowledge_flags_add: List[str] = []
-    inventory_add: List[str] = []
-    inventory_remove: List[str] = []
+    inventory_add: List[Any] = []
+    inventory_remove: List[Any] = []
     karma_delta: int = 0
     alive: Optional[bool] = None
     relationships_update: Dict[str, Optional[str]] = {}
@@ -207,7 +207,7 @@ class CharacterModel(BaseModel):
     affinity: Dict[str, int] = {}
     power_stat: PowerStatModel = PowerStatModel()
     knowledge_flags: List[str] = []
-    inventory: List[str] = []
+    inventory: List[Any] = []
     karma: int = 0
     alive: bool = True
     relationships: Dict[str, str] = {}
@@ -285,7 +285,10 @@ class LocationNodeModel(BaseModel):
     unlock_exp: int = Field(default=0, description="Minimum EXP required to access")
     unlock_checkpoint_id: Optional[str] = Field(default=None, description="Checkpoint required to unlock")
     is_starting_location: bool = False
-    connected_to: List[str] = Field(default_factory=list, description="IDs of connected locations")
+    connected_to: List[Any] = Field(
+        default_factory=list,
+        description="Connected IDs or edge objects with travel metadata",
+    )
     tags: List[str] = Field(default_factory=list)
 
 
