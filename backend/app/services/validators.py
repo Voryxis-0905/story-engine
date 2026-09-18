@@ -109,6 +109,10 @@ def validate_location_map(location_map: Dict[str, Any]) -> List[str]:
                 f"{label}: 'unlock_checkpoint_id' must be a string or null, got {unlock_cp!r}"
             )
 
+        visibility = loc.get("discovery_status", "discovered")
+        if visibility not in {"unknown", "rumored", "discovered", "visited", "creator_only"}:
+            errors.append(f"{label}: invalid discovery_status {visibility!r}")
+
     starting = [loc for loc in locations if loc.get("is_starting_location") is True]
     if not starting:
         errors.append(

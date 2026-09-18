@@ -2,14 +2,15 @@ import { lazy, Suspense } from 'react';
 import type { PlaySession } from './usePlaySession';
 import { BoltIcon, BookOpenIcon, BriefcaseIcon, EyeIcon, FireIcon, FlagIcon, MapIcon, NewspaperIcon, UserIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { LocationMap } from '../../components/LocationMap';
+import type { InventoryItem } from '../../api/client';
 
 // The affinity graph pulls in a heavy graph library; load it only when the
 // Codex drawer is opened.
 const CodexGraph = lazy(() => import('../../components/CodexGraph').then((m) => ({ default: m.CodexGraph })));
 
-type Props = Pick<PlaySession, 'playState' | 'activeDrawer' | 'setActiveDrawer' | 'locations' | 'affinityGraph' | 'protagonist' | 'quests' | 'journal' | 'handleTravelTo'>;
+type Props = Pick<PlaySession, 'playState' | 'activeDrawer' | 'setActiveDrawer' | 'locations' | 'affinityGraph' | 'protagonist' | 'quests' | 'journal' | 'handleTravelTo' | 'handlePreviewTravel' | 'travelPreview' | 'previewLoading' | 'handleItemAction' | 'handleContinueJourney' | 'handleAbandonJourney'>;
 
-export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locations, affinityGraph, protagonist, quests, journal, handleTravelTo }: Props) {
+export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locations, affinityGraph, protagonist, quests, journal, handleTravelTo, handlePreviewTravel, travelPreview, previewLoading, handleItemAction, handleContinueJourney, handleAbandonJourney }: Props) {
   return (<>
       {/* RIGHT ICON STRIP & SLIDE-IN DRAWERS */}
       <div className="flex z-20 h-full shrink-0">
@@ -43,7 +44,7 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
                   {!protagonist?.inventory?.length ? (
                     <p className="text-xs font-bold text-[var(--ink-soft)] text-center py-6">No items in inventory.</p>
                   ) : (
-                    protagonist.inventory.map((item: any) => (
+                    protagonist.inventory.map((item: InventoryItem) => (
                       <div key={item.instance_id} className="p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--line)] shadow-sm space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-[15px] text-[var(--ink-main)]">{item.name}</span>
@@ -64,6 +65,16 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
                         <div className="flex gap-2 text-[10px] font-mono text-[var(--ink-faint)]">
                           <span>{item.condition}</span>{item.equipped && <span>equipped</span>}{item.charges !== null && item.charges !== undefined && <span>{item.charges} charges</span>}
                         </div>
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {(['Inspect', 'Use'] as const).map((verb) => (
+                            <button key={verb} type="button" onClick={() => handleItemAction(verb, item)} className="rounded-lg border border-[var(--line)] px-2 py-1 text-[10px] font-bold">{verb}</button>
+                          ))}
+                          <button type="button" onClick={() => handleItemAction(item.equipped ? 'Unequip' : 'Equip', item)} className="rounded-lg border border-[var(--line)] px-2 py-1 text-[10px] font-bold">{item.equipped ? 'Unequip' : 'Equip'}</button>
+                          <button type="button" onClick={() => {
+                            const important = item.tags?.some((tag) => ['important', 'key_item', 'quest'].includes(tag));
+                            if (!important || window.confirm(`Drop ${item.name}?`)) handleItemAction('Drop', item);
+                          }} className="rounded-lg border border-[var(--danger)] px-2 py-1 text-[10px] font-bold text-[var(--danger)]">Drop</button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -73,7 +84,14 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
               {/* 2. Map Drawer */}
               {activeDrawer === 'map' && (
                 <div className="space-y-4">
-                  <LocationMap locations={locations} currentLocation={protagonist?.location} onTravel={handleTravelTo} />
+                  {playState?.active_journey?.status === 'interrupted' && (
+                    <div className="rounded-xl border border-[var(--warn)] bg-[var(--bg-surface)] p-3 text-xs space-y-2">
+                      <div className="font-bold">Journey interrupted on the way to {playState.active_journey.destination}</div>
+                      <button type="button" onClick={handleContinueJourney} className="rounded-lg bg-[var(--periwinkle-dark)] px-3 py-2 font-bold text-white">Continue journey</button>
+                      <button type="button" onClick={handleAbandonJourney} className="ml-2 rounded-lg border border-[var(--line)] px-3 py-2 font-bold">Abandon</button>
+                    </div>
+                  )}
+                  <LocationMap locations={locations} currentLocation={protagonist?.location} onPreview={handlePreviewTravel} travelPreview={travelPreview} previewLoading={previewLoading} onTravel={handleTravelTo} />
                 </div>
               )}
 

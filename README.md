@@ -4,6 +4,8 @@
 
 Người chơi quyết định hành động và tác động đến kết quả. Thế giới giữ lịch sử, luật vận hành và thông tin riêng của từng nhân vật. Creator cũng là người chơi, nhưng có quyền sửa kết quả và trạng thái thế giới.
 
+Túi đồ dùng schema ổn định với nội dung linh hoạt theo thể loại. Bản đồ hỗ trợ xem trước tuyến đường, thời gian và rủi ro; di chuyển được kể như một cảnh chuyển, timeskip hoặc hành trình, đồng thời cập nhật đồng hồ và sự kiện thế giới.
+
 ## Trạng thái
 
 MVP đang phát triển. Mốc nhập mã đầu tiên giữ các lỗi đã phát hiện để xử lý có lịch sử rõ ràng. Xem [báo cáo đánh giá](docs/REVIEW-VA-BRAINSTORM.md) và [nguyên tắc thiết kế](docs/DESIGN-PRINCIPLES.md).

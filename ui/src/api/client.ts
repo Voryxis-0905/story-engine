@@ -42,6 +42,31 @@ export interface PlayState {
   lifecycle_status?: string;
   story_mode?: string;
   epilogue?: { text: string; chosen_choice?: string } | null;
+  active_journey?: ActiveJourney | null;
+}
+
+export interface ActiveJourney {
+  journey_id: string;
+  origin?: string;
+  destination: string;
+  remaining_route?: string[];
+  elapsed_minutes?: number;
+  status: 'active' | 'interrupted' | 'completed' | 'abandoned';
+  reason?: string;
+}
+
+export interface TravelPreview {
+  status: 'available' | 'blocked' | 'unreachable' | 'already_there' | 'unknown_destination';
+  origin?: string;
+  destination?: string;
+  route: string[];
+  legs: Array<{ from: string; to: string; travel_time_minutes: number; danger: number; tags: string[] }>;
+  elapsed_minutes: number;
+  estimated_ticks: number;
+  narration_mode?: string;
+  risk?: { level: string; known_tags: string[] };
+  requirements_missing?: Array<Record<string, unknown>>;
+  reason?: string;
 }
 
 export interface InventoryItem {
@@ -54,6 +79,8 @@ export interface InventoryItem {
   abilities: Array<Record<string, any> | string>;
   tags: string[];
   quantity: number;
+  stackable?: boolean;
+  custom_name?: string | null;
   condition: string;
   equipped: boolean;
   charges?: number | null;
@@ -349,5 +376,11 @@ export const api = {
       fetchJSON<{ locations: any[] }>(`/worlds/${worldName}/location-map`),
     status: (worldName: string) =>
       fetchJSON<{ locations: any[] }>(`/worlds/${worldName}/location-map/status`),
+    previewTravel: (worldName: string, destination: string) =>
+      fetchJSON<TravelPreview>(`/worlds/${worldName}/travel/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destination }),
+      }),
   },
 };

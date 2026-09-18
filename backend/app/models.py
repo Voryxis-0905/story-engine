@@ -133,6 +133,10 @@ class ChapterContinueRequest(BaseModel):
     expected_revision: Optional[int] = None
 
 
+class TravelPreviewRequest(BaseModel):
+    destination: str
+
+
 class ChapterStartRequest(BaseModel):
     opening_mode: Optional[str] = None
     opening_text: Optional[str] = None
@@ -290,6 +294,7 @@ class LocationNodeModel(BaseModel):
         description="Connected IDs or edge objects with travel metadata",
     )
     tags: List[str] = Field(default_factory=list)
+    discovery_status: Literal["unknown", "rumored", "discovered", "visited", "creator_only"] = "discovered"
 
 
 class LocationMapModel(BaseModel):

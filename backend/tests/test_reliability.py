@@ -205,6 +205,53 @@ class ReliabilityTests(unittest.TestCase):
         }}})
         self.assertEqual(hero['inventory'], [])
 
+    def test_inventory_identity_and_stacking_do_not_merge_unique_same_named_items(self):
+        from app.story.inventory import add_inventory_item, remove_inventory_item
+        inventory = []
+        add_inventory_item(inventory, {'instance_id': 'coin_a', 'item_id': 'coin', 'name': 'Coin',
+                                       'stackable': False, 'quantity': 1})
+        add_inventory_item(inventory, {'instance_id': 'coin_b', 'item_id': 'coin', 'name': 'Coin',
+                                       'stackable': False, 'quantity': 1})
+        self.assertEqual([item['instance_id'] for item in inventory], ['coin_a', 'coin_b'])
+        remove_inventory_item(inventory, {'instance_id': 'coin_a'})
+        self.assertEqual([item['instance_id'] for item in inventory], ['coin_b'])
+
+        add_inventory_item(inventory, {'instance_id': 'herb_a', 'item_id': 'herb', 'name': 'Herb',
+                                       'stackable': True, 'quantity': '2'})
+        add_inventory_item(inventory, {'instance_id': 'herb_b', 'item_id': 'herb', 'name': 'Herb',
+                                       'stackable': True, 'quantity': 3})
+        herb = next(item for item in inventory if item.get('item_id') == 'herb')
+        self.assertEqual(herb['quantity'], 5)
+
+    def test_bad_ai_inventory_quantity_is_normalized_without_crashing(self):
+        from app.story.inventory import normalize_item
+        item = normalize_item({'name': 'Impossible bundle', 'quantity': 'many', 'charges': None})
+        self.assertEqual(item['quantity'], 1)
+
+    def test_explicit_inventory_actions_are_engine_owned(self):
+        characters = self.read('character_state.json')
+        characters['characters']['char_xueli']['inventory'] = [{
+            'instance_id': 'lamp_1', 'item_id': 'lamp', 'name': 'Signal Lamp',
+            'stackable': False, 'quantity': 1, 'equipped': False, 'charges': 2,
+        }]
+        self.write('character_state.json', characters)
+        equipped = self.post('chapter/continue', {'user_input': 'Equip Signal Lamp.'})
+        self.assertEqual(equipped.status_code, 200, equipped.text)
+        resolution = equipped.json()['chapter']['inventory_resolution']
+        self.assertEqual(resolution['status'], 'resolved')
+        item = self.read('character_state.json')['characters']['char_xueli']['inventory'][0]
+        self.assertTrue(item['equipped'])
+
+        used = self.post('chapter/continue', {'user_input': 'Use Signal Lamp.'})
+        self.assertEqual(used.status_code, 200, used.text)
+        item = self.read('character_state.json')['characters']['char_xueli']['inventory'][0]
+        self.assertEqual(item['charges'], 1)
+
+        missing = self.post('chapter/continue', {'user_input': 'Use Missing Key.'})
+        self.assertEqual(missing.status_code, 200, missing.text)
+        self.assertEqual(missing.json()['chapter']['inventory_resolution']['reason'], 'item_not_owned')
+        self.assertEqual(len(self.read('character_state.json')['characters']['char_xueli']['inventory']), 1)
+
     def test_travel_turn_commits_route_location_and_elapsed_clock(self):
         config = self.read('world_config.json')
         config['story_clock'].update(tick=0, day=1, time_of_day='morning')
@@ -235,6 +282,26 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(clock['elapsed_minutes'], 150)
         self.assertEqual(clock['minute_of_day'], 630)
         self.assertEqual(clock['tick'], 3)
+
+    def test_travel_preview_is_read_only_and_does_not_roll_encounter(self):
+        characters = self.read('character_state.json')
+        characters['characters']['char_xueli']['location'] = 'Village'
+        self.write('character_state.json', characters)
+        self.write('location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village', 'x': 0, 'y': 0,
+             'connected_to': [{'to': 'forest', 'travel_time_minutes': 90,
+                               'danger': 1, 'tags': ['bandit_road']}]},
+            {'id': 'forest', 'name': 'Forest', 'x': 20, 'y': 0, 'connected_to': []},
+        ]})
+        before = {path.name: path.read_bytes() for path in self.path.glob('*.json')}
+        response = self.client.post(f'/worlds/{self.world}/travel/preview', json={'destination': 'Forest'})
+        self.assertEqual(response.status_code, 200, response.text)
+        preview = response.json()
+        self.assertEqual(preview['status'], 'available')
+        self.assertEqual(preview['elapsed_minutes'], 90)
+        self.assertEqual(preview['risk'], {'level': 'high', 'known_tags': ['bandit_road']})
+        self.assertNotIn('danger_roll', preview)
+        self.assertEqual(before, {path.name: path.read_bytes() for path in self.path.glob('*.json')})
 
     def test_travel_without_connected_route_is_blocked_without_moving_or_time_skip(self):
         characters = self.read('character_state.json')
@@ -277,6 +344,54 @@ class ReliabilityTests(unittest.TestCase):
         self.assertFalse(locations['island']['is_reachable'])
         self.assertIn('Không có tuyến đường', locations['island']['unlock_reason_missing'])
 
+    def test_player_map_and_preview_hide_undiscovered_location(self):
+        characters = self.read('character_state.json')
+        characters['characters']['char_xueli']['location'] = 'Village'
+        self.write('character_state.json', characters)
+        self.write('location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village', 'x': 10, 'y': 10,
+             'connected_to': ['vault'], 'is_starting_location': True},
+            {'id': 'vault', 'name': 'Secret Moon Vault', 'description': 'Spoiler',
+             'x': 50, 'y': 50, 'connected_to': [], 'tags': ['secret'],
+             'discovery_status': 'unknown'},
+        ]})
+        locations = self.client.get(f'/worlds/{self.world}/location-map/status').json()['locations']
+        vault = next(item for item in locations if item['id'] == 'vault')
+        self.assertEqual(vault['name'], 'Unknown location')
+        self.assertEqual(vault['description'], '')
+        self.assertEqual(vault['tags'], [])
+        self.assertFalse(vault['is_unlocked'])
+        legacy_vault = next(item for item in self.client.get(
+            f'/worlds/{self.world}/location-map').json()['locations'] if item['id'] == 'vault')
+        self.assertEqual(legacy_vault['name'], 'Unknown location')
+        preview = self.client.post(f'/worlds/{self.world}/travel/preview',
+                                   json={'destination': 'Secret Moon Vault'}).json()
+        self.assertEqual(preview['status'], 'blocked')
+        self.assertEqual(preview['reason'], 'destination_undiscovered')
+
+    def test_creator_can_preview_and_commit_route_and_inventory_edits(self):
+        self.write('location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village', 'x': 10, 'y': 10,
+             'connected_to': [], 'is_starting_location': True},
+            {'id': 'forest', 'name': 'Forest', 'x': 50, 'y': 50, 'connected_to': []},
+        ]})
+        changes = [
+            {'kind': 'location', 'location_id': 'village', 'field': 'connected_to',
+             'value': [{'to': 'forest', 'travel_time_minutes': 45, 'danger': .2}]},
+            {'kind': 'inventory_item', 'character_id': 'char_xueli', 'operation': 'add',
+             'item': {'instance_id': 'rope_1', 'item_id': 'rope', 'name': 'Rope'}},
+        ]
+        before_map = self.read('location_map.json')
+        preview = self.post('creator/edit', {'expected_revision': 0, 'preview': True, 'changes': changes})
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertTrue(preview.json()['ok'])
+        self.assertEqual(self.read('location_map.json'), before_map)
+        commit = self.post('creator/edit', {'expected_revision': 0, 'changes': changes})
+        self.assertEqual(commit.status_code, 200, commit.text)
+        self.assertEqual(self.read('location_map.json')['locations'][0]['connected_to'][0]['travel_time_minutes'], 45)
+        inventory = self.read('character_state.json')['characters']['char_xueli']['inventory']
+        self.assertTrue(any(isinstance(item, dict) and item.get('instance_id') == 'rope_1' for item in inventory))
+
     def test_dangerous_travel_can_interrupt_and_still_advance_time(self):
         config = self.read('world_config.json')
         config['story_clock'].update(tick=0, day=1, time_of_day='morning')
@@ -303,6 +418,23 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(travel['elapsed_minutes'], 60)
         self.assertEqual(self.read('character_state.json')['characters']['char_xueli']['location'], 'Village')
         self.assertEqual(self.read('world_config.json')['story_clock']['elapsed_minutes'], 60)
+
+        active = self.read('world_config.json')['active_journey']
+        self.assertEqual(active['status'], 'interrupted')
+        self.assertEqual(active['destination'], 'Forest')
+        self.assertEqual(active['destination_id'], 'forest')
+        self.assertEqual(active['remaining_legs'][0]['travel_time_minutes'], 60)
+        state = self.client.get(f'/worlds/{self.world}/play-state').json()
+        self.assertEqual(state['active_journey']['journey_id'], active['journey_id'])
+
+        continued = self.post('chapter/continue', {'user_input': 'Continue journey.'})
+        self.assertEqual(continued.status_code, 200, continued.text)
+        resolution = continued.json()['chapter']['travel_resolution']
+        self.assertEqual(resolution['reason'], 'continued_journey')
+        self.assertEqual(resolution['elapsed_minutes'], 60)
+        self.assertEqual(self.read('character_state.json')['characters']['char_xueli']['location'], 'Forest')
+        self.assertIsNone(self.read('world_config.json')['active_journey'])
+        self.assertEqual(self.read('world_config.json')['story_clock']['elapsed_minutes'], 120)
 
     def test_codex_returns_unlocked_cards_without_npc_private_state(self):
         characters = self.read('character_state.json')

@@ -18,6 +18,7 @@ Chạy bằng `backend/main.py` hoặc `uvicorn --app-dir backend main:app`. `ap
 | `app/story/knowledge.py` | Fact có ID, tri thức theo chủ thể (nguồn/độ chắc chắn) và projection dùng chung |
 | `app/story/observer.py` | Chọn người có mặt & có thể quan sát cảnh; giới hạn số NPC nhận tâm lý mỗi lượt |
 | `app/story/action_resolution.py` | Xác nhận tài nguyên/điều kiện/quyền tiếp cận; kết quả hành động có seed, writer không đổi |
+| `app/story/inventory.py` | Chuẩn hóa item cũ/mới, định danh instance, stacking và thao tác item do engine sở hữu |
 | `app/story/discovery.py` | Bản ghi khám phá sự kiện có nguồn và view quest theo vòng đời sự kiện |
 | `app/story/relationship_memory.py` | Ký ức quan hệ theo sự kiện (lời hứa/nợ/phản bội) có người biết và tick |
 | `app/story/pacing.py` | Độ dài lượt, nhịp truyện và đóng chương |
@@ -26,6 +27,7 @@ Chạy bằng `backend/main.py` hoặc `uvicorn --app-dir backend main:app`. `ap
 | `app/checkpoint_engine.py` | Điều kiện và tiến trình checkpoint |
 | `app/world/` | Mẫu dữ liệu, luật bản đồ, ranh giới và endgame |
 | `app/world/schema.py` | Phiên bản schema dữ liệu, danh mục file core/cache và migration có backup |
+| `app/world/travel.py` | Preview tuyến đường, thời gian/rủi ro, encounter và hành trình có thể tiếp tục |
 | `app/security.py` | Chính sách origin local cho API trình duyệt (bổ sung cho CORS) |
 | `app/prompts/` | Prompt chia theo nhiệm vụ; thay đổi ở đây có thể đổi hành vi AI |
 | `app/models.py` | Schema dữ liệu đang dùng bởi API |
@@ -63,4 +65,4 @@ và `ui/e2e/` chạy bằng Playwright với API giả qua `page.route`. Chạy 
 
 Đợt sắp xếp này giữ nguyên API, nội dung prompt và định dạng dữ liệu lưu. Chưa thay toàn bộ kiến trúc: điều phối lượt, storage, builder và một số trang khác còn lớn. Tách tiếp theo trách nhiệm khi có thay đổi thực tế và test bảo vệ, tránh tạo quá nhiều lớp chỉ để giảm số dòng.
 
-Ba cảnh báo lint về dependency của React effect và cảnh báo bundle lớn vẫn cần xử lý ở đợt giao diện riêng. Test hiện tại dùng AI giả lập, chưa đo chất lượng truyện với model thật.
+Test hiện tại dùng AI giả lập, chưa đo chất lượng truyện với model thật. Map player hỗ trợ discovery status; dữ liệu cũ không có field này được xem là đã khám phá để giữ tương thích.

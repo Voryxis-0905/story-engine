@@ -339,6 +339,7 @@ def get_play_state(world_name: str):
         "revision": int(world_config.get("revision", 0) or 0),
         "lifecycle_status": world_config.get("lifecycle_status", "active"),
         "story_mode": world_config.get("story_mode", "endless"),
+        "active_journey": world_config.get("active_journey"),
         "epilogue": _read_epilogue(world_path),
         "style_card": get_world_style_card(world_name)
     }

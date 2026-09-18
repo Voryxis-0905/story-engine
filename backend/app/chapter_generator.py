@@ -305,14 +305,25 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         turn_index=story_clock.get("tick", 0),
         action_id=f"act_{current_checkpoint_id}_{story_clock.get('tick', 0)}",
     )
+    from app.story.inventory import resolve_inventory_action
+    inventory_resolution = resolve_inventory_action(
+        narrator_input, protagonist_entry.get("inventory", []) if isinstance(protagonist_entry, dict) else []
+    )
 
-    from app.world.travel import build_travel_plan
+    from app.world.travel import build_travel_plan, find_location
     travel_resolution = build_travel_plan(
         narrator_input, location_map or {}, scene_location,
         tick_minutes=int(world_config.get("travel_tick_minutes", 60) or 60),
         seed_key=f"{world_name}|{story_clock.get('tick', 0)}",
+        active_journey=world_config.get("active_journey"),
     )
     if travel_resolution and travel_resolution.get("status") == "arrived":
+        destination_node = find_location(location_map or {}, travel_resolution.get("destination", ""))
+        if destination_node and destination_node.get("discovery_status", "discovered") in ("unknown", "creator_only"):
+            travel_resolution.update(
+                status="blocked", reason="destination_undiscovered",
+                elapsed_minutes=0, tick_advance=1,
+            )
         attempted = {"characters": {protagonist_id: {
             "location": travel_resolution.get("destination", "")
         }}}
@@ -340,6 +351,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         # Engine-committed outcome of the player's action. The writer must narrate
         # this result, never a different one.
         "action_resolution": action_resolution,
+        "inventory_resolution": inventory_resolution,
         "travel_resolution": travel_resolution,
         "world_config": {
             "genre": world_config.get("genre", ""),
@@ -565,6 +577,13 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             protagonist_changes.pop("location", None)
         state_changes.pop("story_clock_delta", None)
 
+    if inventory_resolution:
+        # Explicit inventory commands are committed by the engine. The model may
+        # describe the result but cannot independently add/remove the target.
+        protagonist_changes = state_changes.setdefault("characters", {}).setdefault(protagonist_id, {})
+        protagonist_changes.pop("inventory_add", None)
+        protagonist_changes.pop("inventory_remove", None)
+
     character_state["characters"] = apply_state_changes(
         character_state["characters"], state_changes,
         trait_definitions=world_config.get("trait_definitions"),
@@ -573,11 +592,34 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         foreshadowing_tracker=foreshadowing_tracker,
         current_chapter_index=this_chapter_index
     )
+    if inventory_resolution:
+        from app.story.inventory import apply_inventory_resolution
+        apply_inventory_resolution(
+            character_state["characters"].get(protagonist_id, {}).setdefault("inventory", []),
+            inventory_resolution,
+        )
 
     world_config["story_clock"] = story_clock
     if travel_resolution and travel_resolution.get("status") in ("arrived", "interrupted"):
         from app.world.travel import advance_clock_minutes
         advance_clock_minutes(story_clock, int(travel_resolution.get("elapsed_minutes", 0) or 0))
+    if travel_resolution and travel_resolution.get("status") == "interrupted":
+        world_config["active_journey"] = {
+            "journey_id": travel_resolution.get("journey_id") or f"journey_{uuid.uuid4().hex[:12]}",
+            "origin": travel_resolution.get("origin"),
+            "destination": travel_resolution.get("destination"),
+            "destination_id": travel_resolution.get("destination_id"),
+            "route": travel_resolution.get("route", []),
+            "remaining_route": travel_resolution.get("remaining_route", []),
+            "remaining_legs": travel_resolution.get("remaining_legs", []),
+            "elapsed_minutes": travel_resolution.get("elapsed_minutes", 0),
+            "started_tick": turn_start_tick,
+            "stopped_at": travel_resolution.get("stopped_at", scene_location),
+            "status": "interrupted",
+            "reason": travel_resolution.get("reason"),
+        }
+    elif travel_resolution and travel_resolution.get("status") in ("arrived", "abandoned"):
+        world_config["active_journey"] = None
     world_config["foreshadowing_tracker"] = foreshadowing_tracker
 
     open_threads = world_config.get("open_threads", [])
@@ -664,6 +706,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "boundary_correction": boundary_correction,
         "psychology_status": psychology_status,
         "action_resolution": action_resolution,
+        "inventory_resolution": inventory_resolution,
         "travel_resolution": travel_resolution,
         "consistency_check": {
             "status": checker_result["status"],

@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
       regenerate: vi.fn(),
       prelude: { generate: vi.fn(), confirm: vi.fn(), regenerate: vi.fn() },
     },
-    map: { status: vi.fn(), get: vi.fn() },
+    map: { status: vi.fn(), get: vi.fn(), previewTravel: vi.fn() },
     worlds: { affinityGraph: vi.fn(), updateConfig: vi.fn() },
     discovery: { questBoard: vi.fn(), journal: vi.fn() },
   },
@@ -51,6 +51,7 @@ beforeEach(() => {
   api.play.prelude.confirm.mockResolvedValue({});
   api.map.status.mockResolvedValue({ locations: [] });
   api.map.get.mockResolvedValue({ locations: [] });
+  api.map.previewTravel.mockResolvedValue({ status: 'available', destination: 'Old Forest', route: ['Sect', 'Old Forest'], legs: [], elapsed_minutes: 90, estimated_ticks: 2, risk: { level: 'low', known_tags: [] } });
   api.worlds.affinityGraph.mockResolvedValue({ nodes: [], edges: [] });
   api.worlds.updateConfig.mockResolvedValue({});
   api.discovery.questBoard.mockResolvedValue({ quests: [], enabled: true });
@@ -68,6 +69,25 @@ describe('usePlaySession input/retry loop', () => {
     act(() => result.current.handleTravelTo({ id: 'forest', name: 'Old Forest' }));
     expect(result.current.input).toBe('Travel to Old Forest.');
     expect(result.current.activeDrawer).toBeNull();
+    expect(api.play.continue).not.toHaveBeenCalled();
+  });
+
+  it('previews travel without sending or changing the input', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+    act(() => result.current.setInput('keep this draft'));
+    await act(async () => { await result.current.handlePreviewTravel({ id: 'forest', name: 'Old Forest' }); });
+    expect(api.map.previewTravel).toHaveBeenCalledWith('WorldA', 'Old Forest');
+    expect(result.current.travelPreview?.elapsed_minutes).toBe(90);
+    expect(result.current.input).toBe('keep this draft');
+    expect(api.play.continue).not.toHaveBeenCalled();
+  });
+
+  it('turns an inventory command into editable input without mutating state', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+    act(() => result.current.handleItemAction('Equip', { instance_id: 'blade_1', name: 'Moon Blade' } as any));
+    expect(result.current.input).toBe('Equip Moon Blade.');
     expect(api.play.continue).not.toHaveBeenCalled();
   });
 
