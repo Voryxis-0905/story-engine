@@ -8,7 +8,7 @@ Người chơi quyết định hành động và tác động đến kết quả
 
 MVP đang phát triển. Mốc nhập mã đầu tiên giữ các lỗi đã phát hiện để xử lý có lịch sử rõ ràng. Xem [báo cáo đánh giá](docs/REVIEW-VA-BRAINSTORM.md) và [nguyên tắc thiết kế](docs/DESIGN-PRINCIPLES.md).
 
-Đã sửa lỗi cú pháp ở hai prompt hồi kết để backend khởi động. Frontend build đạt; bộ kiểm tra backend cũ dừng sau 110 kiểm tra đạt tại lỗi xóa API key. Chưa xác nhận toàn bộ chức năng hoặc chất lượng truyện với AI thật.
+Đợt sửa độ tin cậy đầu tiên: 14 test hồi quy mới và toàn bộ 747 kiểm tra cũ đạt bằng AI giả lập. Đã sửa lưu hậu quả sự kiện, save/restore sự kiện, map status, hồi kết và cấu hình key. Xem [ghi chú thay đổi và giới hạn](docs/Tasks_and_Reports/reliability-pass-1.md). Chưa xác nhận chất lượng truyện với AI thật.
 
 ## Cài đặt
 
@@ -32,9 +32,13 @@ Thiết lập nhà cung cấp/model trong Settings khi cần sử dụng AI. C�
 npm --prefix ui run build
 npm --prefix ui run lint
 .\.venv\Scripts\python.exe -m compileall -q backend
+.\.venv\Scripts\python.exe backend/run_tests.py
+.\.venv\Scripts\python.exe backend/run_tests.py --legacy
 ```
 
-**Bộ test cũ `backend/test_engine.py` thay đổi/xóa world có tên test và sửa runtime config. Chỉ chạy trên bản sao thử nghiệm với dữ liệu riêng, không chạy trên thư mục đang chơi.** Cần cải tổ test để cô lập dữ liệu tự động.
+`backend/run_tests.py` dùng thư mục dữ liệu tạm và chặn HTTP đến nhà cung cấp AI. **Không chạy trực tiếp `backend/test_engine.py` trên thư mục đang chơi:** script cũ có thao tác xóa world test và sửa runtime config; luôn chạy qua runner với `--legacy`.
+
+Biến môi trường `STORY_ENGINE_DATA_DIR` cho phép chọn thư mục lưu dữ liệu riêng. Khi không đặt, ứng dụng vẫn dùng `data/` như trước.
 
 ## Thư mục
 

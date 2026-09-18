@@ -81,6 +81,9 @@ TEMPLATES = {
     },
     "location_map.json": {
         "locations": []
+    },
+    "world_events.json": {
+        "events": []
     }
 }
 

@@ -18,10 +18,11 @@ except ImportError:
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-WORLDS_DIR = os.path.join(BASE_DIR, "data", "worlds")
+DATA_DIR = os.path.abspath(os.environ.get("STORY_ENGINE_DATA_DIR") or os.path.join(BASE_DIR, "data"))
+WORLDS_DIR = os.path.join(DATA_DIR, "worlds")
 os.makedirs(WORLDS_DIR, exist_ok=True)
 
-RUNTIME_CONFIG_PATH = os.path.join(BASE_DIR, "data", "runtime_config.json")
+RUNTIME_CONFIG_PATH = os.path.join(DATA_DIR, "runtime_config.json")
 DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
 
 _VALID_ROLES = frozenset({"planner", "writer", "extractor", "editor", "checker", "summarizer"})
@@ -127,11 +128,18 @@ def get_effective_fallback_chain(world_name: str = None) -> list:
     main_mod = sys.modules.get("main")
     if main_mod and getattr(main_mod, "get_effective_fallback_chain", None) not in (None, get_effective_fallback_chain):
         return main_mod.get_effective_fallback_chain(world_name)
+    app_cfg = read_runtime_config()
     if world_name:
         world_cfg = read_world_runtime_override(world_name)
         if world_cfg.get("fallback_chain"):
             return world_cfg["fallback_chain"]
-    app_cfg = read_runtime_config()
+        if world_cfg.get("openrouter_api_key"):
+            return [{
+                "provider": app_cfg.get("llm_provider", "openrouter"),
+                "model": get_effective_model(world_name),
+                "api_key": world_cfg["openrouter_api_key"],
+                "base_url": app_cfg.get("base_url", ""),
+            }]
     if app_cfg.get("fallback_chain"):
         return app_cfg["fallback_chain"]
     api_key = get_effective_api_key(world_name)

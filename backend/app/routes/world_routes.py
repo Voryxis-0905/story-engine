@@ -46,6 +46,7 @@ from app.models import (
     TraitDefinition, CardModel, CheckpointBoundaryModel, CheckpointModel,
     CharacterModel, PowerStatModel
 )
+from app.checkpoint_engine import check_map_based_restrictions
 
 try:
     from skill_limiter import check_skill_limiter
@@ -119,6 +120,7 @@ def update_runtime_config(req: RuntimeConfigUpdate):
 @router.delete("/runtime-config/api-key")
 def clear_runtime_api_key():
     cfg = read_runtime_config()
+    cfg["api_key"] = ""
     cfg["openrouter_api_key"] = ""
     cfg["fallback_chain"] = []
     write_runtime_config(cfg)
@@ -600,34 +602,27 @@ def get_world_location_map_status(world_name: str):
         world_config = {}
 
     characters = character_state.get("characters", {})
-    main_char_id = world_config.get("main_character_id", "")
+    main_char_id = world_config.get("protagonist_id") or world_config.get("main_character_id", "")
     main_char = characters.get(main_char_id, {})
-    main_realm = main_char.get("power_stat", {}).get("realm", "")
-    main_exp = main_char.get("power_stat", {}).get("exp", 0)
-
-    completed_checkpoints = set(world_config.get("completed_checkpoints", []) or [])
-    current_cp_id = world_config.get("current_checkpoint_id", "")
-    completed_checkpoints.add(current_cp_id)
-
     locations = location_map.get("locations", [])
     enriched = []
     for loc in locations:
         loc_id = loc.get("id", "")
-        unlock_realm = loc.get("unlock_realm")
-        unlock_exp = loc.get("unlock_exp", 0)
-        unlock_cp = loc.get("unlock_checkpoint_id")
-
-        is_unlocked = True
+        # Use exactly the same rules as movement validation.
+        location_name = loc.get("name") or loc_id
+        violations = check_map_based_restrictions(
+            {"characters": {main_char_id: {"location": location_name}}},
+            {"locations": [loc]}, {main_char_id: main_char}, world_config
+        )
+        is_unlocked = not violations
         reasons = []
-        if unlock_realm and main_realm != unlock_realm:
-            is_unlocked = False
-            reasons.append(f"Cần đạt {unlock_realm}")
-        if unlock_exp and main_exp < unlock_exp:
-            is_unlocked = False
-            reasons.append(f"Cần {unlock_exp} EXP (hiện có {main_exp})")
-        if unlock_cp and unlock_cp not in completed_checkpoints:
-            is_unlocked = False
-            reasons.append(f"Cần hoàn thành checkpoint {unlock_cp}")
+        for violation in violations:
+            if violation["reason"] == "exp":
+                reasons.append(f"Cần {violation['required']} EXP (hiện có {violation['current']})")
+            elif violation["reason"] == "realm":
+                reasons.append(f"Cần đạt {violation['required']}")
+            else:
+                reasons.append(f"Cần tới mốc {violation['required']}")
 
         enriched.append({
             **loc,

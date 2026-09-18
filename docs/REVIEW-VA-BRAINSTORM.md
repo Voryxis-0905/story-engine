@@ -1,5 +1,7 @@
 # Story Engine — kiểm tra và hướng phát triển
 
+**Cập nhật 18/09/2026:** nhóm lỗi tái hiện ở mục 1 đã được xử lý trong đợt đầu. Xem [kết quả, cách kiểm tra và giới hạn còn lại](Tasks_and_Reports/reliability-pass-1.md). Phần bên dưới giữ nguyên như bản đánh giá ban đầu.
+
 Ngày 17/09/2026. Phạm vi: đọc mã và tài liệu, cài môi trường, chạy build/lint, kiểm tra HTTP, chạy test cũ và tái hiện riêng một số lỗi bằng dữ liệu giả lập. Đây chưa phải đánh giá chất lượng văn chương với model thật hoặc kiểm toán toàn bộ hệ thống.
 
 ## Nhận định chính
