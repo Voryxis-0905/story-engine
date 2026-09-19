@@ -1,10 +1,10 @@
-# Đóng góp cho Story Engine
+# Contributing to Story Engine
 
-Đây là MVP đang phát triển. Bắt đầu từ [README](README.md), [nguyên tắc thiết kế](docs/DESIGN-PRINCIPLES.md) và [bản đồ codebase](docs/CODEBASE.md).
+Story Engine is an active MVP. Start with the [README](README.md), [design principles](docs/DESIGN-PRINCIPLES.md), and [codebase map](docs/CODEBASE.md).
 
-## Chuẩn bị
+## Setup
 
-Dùng Python 3.12 và Node.js 24. Tạo `.venv`, cài `requirements.lock.txt` và chạy `npm --prefix ui ci` theo README. Kích hoạt môi trường Python trước khi chạy các lệnh npm kiểm tra:
+Use Python 3.12 and Node.js 24. Create `.venv`, install `requirements.lock.txt`, and run `npm --prefix ui ci` as described in the README. Activate the Python environment before running npm commands that execute backend tests:
 
 ```powershell
 # Windows PowerShell
@@ -12,23 +12,23 @@ Dùng Python 3.12 và Node.js 24. Tạo `.venv`, cài `requirements.lock.txt` v�
 npm run dev
 ```
 
-Trên macOS/Linux: `source .venv/bin/activate`. Nếu máy hạn chế chạy script PowerShell, có thể gọi trực tiếp `.venv\Scripts\python.exe backend/run_tests.py` thay vì kích hoạt môi trường.
+On macOS/Linux, use `source .venv/bin/activate`. If PowerShell scripts are restricted, invoke `.venv\Scripts\python.exe backend/run_tests.py` directly instead of activating the environment.
 
-## Một thay đổi tốt
+## Making a change
 
-1. Tạo branch cho một vấn đề cụ thể; mô tả tình huống trước/sau.
-2. Sửa tại module sở hữu trách nhiệm. Tránh thêm logic mới vào các file export tương thích.
-3. Với lỗi hành vi, thêm test hồi quy độc lập trong `backend/tests/`. Không thêm kịch bản phụ thuộc thứ tự vào script test cũ.
-4. Cập nhật tài liệu khi đổi luồng, API hoặc định dạng dữ liệu.
-5. Chạy `npm run check` rồi mở PR, ghi rõ kết quả và giới hạn kiểm tra.
+1. Create a branch for one focused issue and describe the before/after behavior.
+2. Change the module that owns the responsibility; do not add new behavior to compatibility exports.
+3. For behavior bugs, add an independent regression test in `backend/tests/`. Avoid order-dependent scenarios in the legacy script.
+4. Update documentation when changing a flow, API, or persisted data format.
+5. Run `npm run check` before opening a pull request and report validation results and limits.
 
-`npm run check` chạy test backend, bộ kiểm tra cũ, test giao diện (Vitest), build TypeScript/giao diện và lint. Có thể chạy riêng `npm test`, `npm run test:legacy`, `npm run test:ui`, `npm run test:e2e`, `npm run build`, `npm run lint`. CI chạy cùng các bước trên Windows và Linux cho backend, Linux cho giao diện; E2E cần cài Chromium bằng `npm --prefix ui exec -- playwright install --with-deps chromium`.
+`npm run check` runs backend tests, legacy checks, Vitest UI tests, the TypeScript/UI build, and linting. You can run `npm test`, `npm run test:legacy`, `npm run test:ui`, `npm run test:e2e`, `npm run build`, or `npm run lint` separately. CI runs the backend checks on Windows and Linux, and UI checks on Linux. E2E requires Chromium, installed with `npm --prefix ui exec -- playwright install --with-deps chromium`.
 
-## Dữ liệu và thay đổi hành vi
+## Data and behavior changes
 
-- Không commit API key, `.env`, dữ liệu world/save cá nhân, `.venv`, `node_modules` hoặc `dist`.
-- Khi cần tái hiện lỗi với dữ liệu, tạo fixture nhỏ đã loại thông tin cá nhân. Dùng `STORY_ENGINE_DATA_DIR` trỏ vào thư mục thử nghiệm riêng.
-- Giữ tương thích save cũ hoặc nêu rõ cách chuyển đổi. Việc thay prompt cũng là thay đổi hành vi, cần đánh giá riêng.
-- Test tự động không cần API key và không được gọi nhà cung cấp AI thật.
+- Never commit API keys, `.env` files, personal world/save data, `.venv`, `node_modules`, or `dist`.
+- To reproduce a data issue, create a minimal sanitized fixture and point `STORY_ENGINE_DATA_DIR` to an isolated directory.
+- Preserve compatibility with existing saves, or document a migration path. Prompt changes are behavior changes and need their own evaluation.
+- Automated tests must not require API keys or call live AI providers.
 
-Kho mã chưa chốt giấy phép phát hành công khai. Trước khi public cần chọn giấy phép, rà dữ liệu mẫu và hoàn thiện hướng dẫn phát hành; tài liệu này không tự cấp quyền sử dụng mã.
+The repository does not yet have a public release license. Before publishing it publicly, choose a license, review sample data, and complete release documentation. This document does not grant permission to use the code.

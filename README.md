@@ -1,20 +1,20 @@
 # Story Engine
 
-Ứng dụng kể chuyện tương tác chạy cục bộ, với backend Python/FastAPI và giao diện React/TypeScript.
+Story Engine is a local interactive storytelling application with a Python/FastAPI backend and a React/TypeScript interface.
 
-Người chơi quyết định hành động và tác động đến kết quả. Thế giới giữ lịch sử, luật vận hành và thông tin riêng của từng nhân vật. Creator cũng là người chơi, nhưng có quyền sửa kết quả và trạng thái thế giới.
+Players choose actions that shape outcomes. Each world retains its own history, rules, characters, memories, map, calendar, quests, and consequences. A creator can also play the world while using dedicated tools to inspect and edit its state.
 
-Túi đồ dùng schema ổn định với nội dung linh hoạt theo thể loại. Bản đồ hỗ trợ xem trước tuyến đường, thời gian và rủi ro; di chuyển được kể như một cảnh chuyển, timeskip hoặc hành trình, đồng thời cập nhật đồng hồ và sự kiện thế giới.
+Inventory uses a stable, genre-neutral schema with flexible descriptions and effects. The map previews routes, travel time, and risk; travel can be narrated as a transition, time skip, or journey while the engine advances the world clock and events deterministically.
 
-## Trạng thái
+## Project status
 
-MVP đang phát triển. Mốc nhập mã đầu tiên giữ các lỗi đã phát hiện để xử lý có lịch sử rõ ràng. Xem [báo cáo đánh giá](docs/REVIEW-VA-BRAINSTORM.md) và [nguyên tắc thiết kế](docs/DESIGN-PRINCIPLES.md).
+This is an actively developed MVP. Generated worlds use advisory checkpoints: a checkpoint represents an event that can unfold in different ways, rather than a location or outcome that traps the player. The engine protects continuity by checking narrative time, location, declared consequences, and explicit player stopping points before committing a turn.
 
-Đợt sửa độ tin cậy đầu tiên: 14 test hồi quy mới và toàn bộ 747 kiểm tra cũ đạt bằng AI giả lập. Đã sửa lưu hậu quả sự kiện, save/restore sự kiện, map status, hồi kết và cấu hình key. Xem [ghi chú thay đổi và giới hạn](docs/Tasks_and_Reports/reliability-pass-1.md). Chưa xác nhận chất lượng truyện với AI thật.
+See the [design principles](docs/DESIGN-PRINCIPLES.md), [codebase map](docs/CODEBASE.md), and [review and brainstorming notes](docs/REVIEW-VA-BRAINSTORM.md) for the current direction and known limitations.
 
-## Cài đặt
+## Requirements
 
-Cần Python 3.12 và Node.js 24 (các phiên bản đã dùng khi kiểm tra bản này).
+Python 3.12 and Node.js 24 were used to validate this repository.
 
 ```powershell
 python -m venv .venv
@@ -22,33 +22,30 @@ python -m venv .venv
 npm --prefix ui ci
 ```
 
-Trên Windows, mở `Start-StoryEngine.cmd`, sau đó truy cập http://localhost:5173. Backend chạy tại http://127.0.0.1:8000. Để dừng, nhấn Ctrl+C ở cửa sổ chạy.
+On Windows, run `Start-StoryEngine.cmd`, then open http://localhost:5173. The backend runs at http://127.0.0.1:8000. Press Ctrl+C in the running window to stop it.
 
-Trên hệ điều hành khác, kích hoạt môi trường Python rồi chạy `npm run dev`.
+On other operating systems, activate the Python environment and run `npm run dev`.
 
-Thiết lập nhà cung cấp/model trong Settings khi cần sử dụng AI. Cấu hình thực tế, API key, world cá nhân và save nằm ngoài Git. Kho mã không kèm dữ liệu chơi cá nhân; ứng dụng tự tạo thư mục dữ liệu khi khởi động.
+Configure a provider and model in Settings when you want live AI generation. Runtime configuration, API keys, personal worlds, and saves stay outside Git. The repository contains no personal play data; the application creates its data directory at startup.
 
-## Kiểm tra
+## Validation
 
 ```powershell
-npm --prefix ui run build
-npm --prefix ui run lint
-.\.venv\Scripts\python.exe -m compileall -q backend
-.\.venv\Scripts\python.exe backend/run_tests.py
-.\.venv\Scripts\python.exe backend/run_tests.py --legacy
+npm run check
+npm run test:e2e
 ```
 
-`backend/run_tests.py` dùng thư mục dữ liệu tạm và chặn HTTP đến nhà cung cấp AI. **Không chạy trực tiếp `backend/test_engine.py` trên thư mục đang chơi:** script cũ có thao tác xóa world test và sửa runtime config; luôn chạy qua runner với `--legacy`.
+`npm run check` runs backend tests, the legacy compatibility suite, UI tests, the production UI build, and linting. The test runner uses temporary world data and blocks provider HTTP calls.
 
-Biến môi trường `STORY_ENGINE_DATA_DIR` cho phép chọn thư mục lưu dữ liệu riêng. Khi không đặt, ứng dụng vẫn dùng `data/` như trước.
+Do not run `backend/test_engine.py` directly against a world you are playing. It is a legacy diagnostic script that mutates test worlds and runtime configuration. Use `npm run test:legacy` instead.
 
-## Thư mục
+Set `STORY_ENGINE_DATA_DIR` to choose a separate local data directory. Without it, the application uses `data/`.
 
-Xem [bản đồ codebase](docs/CODEBASE.md), [mục lục tài liệu](docs/README.md) và [hướng dẫn đóng góp](CONTRIBUTING.md) để bắt đầu sửa code. Sau khi kích hoạt môi trường Python, chạy `npm run check` để kiểm tra toàn bộ. GitHub Actions chạy kiểm tra backend trên Windows/Linux và build/lint giao diện trên Linux.
+## Repository layout
 
-- `backend/`: API, engine, luật, bộ nhớ và pipeline AI.
-- `ui/`: giao diện web.
-- `docs/`: thiết kế, đánh giá và lịch sử công việc.
-- `data/`: được tạo cục bộ; không đưa vào Git.
+- `backend/` — API, engine, rules, memory, and AI pipeline.
+- `ui/` — web interface.
+- `docs/` — design documentation, decisions, reviews, and implementation history.
+- `data/` — created locally and excluded from Git.
 
-Các tài liệu cũ có thể mô tả tính năng dự kiến hoặc trạng thái đã lỗi thời. Ưu tiên nguyên tắc thiết kế mới và kết quả kiểm tra có bằng chứng trong báo cáo.
+Read the [documentation index](docs/README.md) and [contribution guide](CONTRIBUTING.md) before changing the project. Historical documents can describe planned or superseded behavior; prioritize current design principles and evidence-backed test reports.

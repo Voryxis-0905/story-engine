@@ -1,17 +1,17 @@
-# Tài liệu Story Engine
+# Story Engine documentation
 
-Đọc theo thứ tự:
+Read these documents in order:
 
-1. [README](../README.md): cài đặt, khởi chạy và kiểm tra.
-2. [Nguyên tắc thiết kế](DESIGN-PRINCIPLES.md): quyền của player/creator, thế giới và checkpoint.
-3. [Bản đồ codebase](CODEBASE.md): trách nhiệm từng module và nơi bắt đầu sửa.
-4. [Hướng dẫn đóng góp](../CONTRIBUTING.md): quy trình thay đổi và kiểm tra.
-5. [Backlog giao agent](AGENT-BACKLOG.md): task, dependency, tiêu chí nghiệm thu và prompt mẫu; lập từ mốc `fc55b72`, cần đối chiếu khi code thay đổi.
+1. [README](../README.md) — setup, local development, and validation.
+2. [Design principles](DESIGN-PRINCIPLES.md) — player and creator authority, world knowledge, events, and checkpoints.
+3. [Codebase map](CODEBASE.md) — module responsibilities and where to begin making a change.
+4. [Contribution guide](../CONTRIBUTING.md) — change workflow and required checks.
+5. [Agent backlog](AGENT-BACKLOG.md) — planned tasks, dependencies, acceptance criteria, and example prompts. It was created at commit `fc55b72`; review it against the current code before implementing an item.
 
-## Thiết kế và lịch sử
+## Design and history
 
-- [Đánh giá ban đầu](REVIEW-VA-BRAINSTORM.md): vấn đề và hướng phát triển, không phải danh sách tính năng đã hoàn thành.
-- [Architecture](Architecture/): tài liệu thiết kế có trước đợt sắp xếp code. Một số đường dẫn và đề xuất chưa phản ánh bản hiện tại.
-- [Tasks_and_Reports](Tasks_and_Reports/): lịch sử triển khai, kiểm tra và quyết định. Giữ lại để truy nguồn; không xem mọi báo cáo là đặc tả hiện hành.
+- [Initial review](REVIEW-VA-BRAINSTORM.md) records issues and possible directions. It is not a list of completed features.
+- [Architecture](Architecture/) contains design material written before the codebase refactor. Some paths and proposals may no longer match the implementation.
+- [Tasks and reports](Tasks_and_Reports/) contains implementation history, validation notes, and decisions. It is retained for traceability and should not be treated as the current specification.
 
-Khi thay đổi hành vi, cập nhật nguyên tắc hoặc tài liệu liên quan cùng PR. Khi đổi vị trí code, cập nhật bản đồ codebase.
+When behavior changes, update the relevant design documentation in the same pull request. When code moves, update the codebase map.

@@ -1,68 +1,65 @@
-# Bản đồ codebase
+# Codebase map
 
 ## Backend
 
-Chạy bằng `backend/main.py` hoặc `uvicorn --app-dir backend main:app`. `app/application.py` lắp ráp ứng dụng, middleware và router.
+Run the backend with `backend/main.py` or `uvicorn --app-dir backend main:app`. `app/application.py` assembles the application, middleware, and routes.
 
-| Vị trí | Trách nhiệm |
+| Location | Responsibility |
 | --- | --- |
-| `app/routes/` | Nhận yêu cầu HTTP, kiểm tra đầu vào và gọi engine/storage |
-| `app/routes/world_routes.py` | Vòng đời world, nhập/xuất và fork |
-| `app/routes/runtime_routes.py` | Cấu hình nhà cung cấp/model/API key |
-| `app/routes/discovery_routes.py` | Map, quest, codex |
-| `app/routes/demo_routes.py` | World mẫu |
-| `app/chapter_generator.py` | Điều phối một lượt: chuẩn bị ngữ cảnh → sinh truyện → kiểm tra → áp dụng → lưu |
-| `app/story/generation.py` | Planner, writer và editor |
-| `app/story/consistency.py` | Kiểm tra nhất quán và hướng dẫn sửa |
-| `app/story/memory.py` | Canon, ngữ cảnh nhiều tầng và tóm tắt |
-| `app/story/knowledge.py` | Fact có ID, tri thức theo chủ thể (nguồn/độ chắc chắn) và projection dùng chung |
-| `app/story/observer.py` | Chọn người có mặt & có thể quan sát cảnh; giới hạn số NPC nhận tâm lý mỗi lượt |
-| `app/story/action_resolution.py` | Xác nhận tài nguyên/điều kiện/quyền tiếp cận; kết quả hành động có seed, writer không đổi |
-| `app/story/inventory.py` | Chuẩn hóa item cũ/mới, định danh instance, stacking và thao tác item do engine sở hữu |
-| `app/story/discovery.py` | Bản ghi khám phá sự kiện có nguồn và view quest theo vòng đời sự kiện |
-| `app/story/relationship_memory.py` | Ký ức quan hệ theo sự kiện (lời hứa/nợ/phản bội) có người biết và tick |
-| `app/story/pacing.py` | Độ dài lượt, nhịp truyện và đóng chương |
-| `app/story/prelude.py` | Mở đầu truyện |
-| `app/story/entities.py` | Chuẩn hóa nhân vật, loại trùng và kiểm tra gói nhập |
-| `app/checkpoint_engine.py` | Điều kiện và tiến trình checkpoint |
-| `app/world/` | Mẫu dữ liệu, luật bản đồ, ranh giới và endgame |
-| `app/world/schema.py` | Phiên bản schema dữ liệu, danh mục file core/cache và migration có backup |
-| `app/world/travel.py` | Preview tuyến đường, thời gian/rủi ro, encounter và hành trình có thể tiếp tục |
-| `app/security.py` | Chính sách origin local cho API trình duyệt (bổ sung cho CORS) |
-| `app/prompts/` | Prompt chia theo nhiệm vụ; thay đổi ở đây có thể đổi hành vi AI |
-| `app/models.py` | Schema dữ liệu đang dùng bởi API |
-| `app/storage.py`, `app/persistence.py` | Đọc/ghi dữ liệu, khóa world, commit journaled và phục hồi khi tiến trình chết |
-| `app/action_guard.py` | `request_id`/receipt chống xử lý trùng và `revision` chống ghi đè cũ |
-| `app/llm_client.py` | Gọi nhà cung cấp AI, lỗi, retry và phản hồi giả lập |
+| `app/routes/` | Receives HTTP requests, validates input, and calls engine or storage code. |
+| `app/routes/world_routes.py` | World lifecycle, import/export, and branching. |
+| `app/routes/runtime_routes.py` | Provider, model, and API-key configuration. |
+| `app/routes/discovery_routes.py` | Map, quest, and codex views. |
+| `app/routes/demo_routes.py` | Sample worlds. |
+| `app/chapter_generator.py` | Orchestrates a turn: context, generation, checking, application, and persistence. |
+| `app/story/generation.py` | Planner, writer, and editor stages. |
+| `app/story/consistency.py` | Continuity checks and rewrite guidance. |
+| `app/story/memory.py` | Canon, multi-tier context, and summaries. |
+| `app/story/knowledge.py` | Stable facts, subject-specific knowledge, sources, confidence, and projections. |
+| `app/story/observer.py` | Chooses scene participants and caps psychology calls per turn. |
+| `app/story/action_resolution.py` | Validates tools, skill evidence, opposition, and deterministic action outcomes. |
+| `app/story/action_effects.py` | Whitelists and applies declared action consequences. |
+| `app/story/inventory.py` | Normalizes legacy and structured items, instance IDs, stacking, and engine-owned item actions. |
+| `app/story/discovery.py` | Event discovery records and event-lifecycle quest views. |
+| `app/story/relationship_memory.py` | Event-grounded memories such as promises, debts, and betrayals. |
+| `app/story/capabilities.py` | Profile-backed capability evidence used to assess actions without genre-bound stats. |
+| `app/story/pacing.py` | Turn length, pacing, and chapter closure. |
+| `app/story/prelude.py` | Prelude and first playable scene generation. |
+| `app/story/entities.py` | Character normalization, deduplication, and imported-package validation. |
+| `app/checkpoint_engine.py` | Checkpoint conditions and progression. |
+| `app/world/` | Data templates, calendars, map rules, boundaries, travel, time skips, and endgame. |
+| `app/world/schema.py` | Data schema versioning, core/cache catalogues, and backup-first migrations. |
+| `app/security.py` | Local browser origin policy in addition to CORS. |
+| `app/prompts/` | Task-specific prompts; changes here can change AI behavior. |
+| `app/models.py` | API data schemas. |
+| `app/storage.py`, `app/persistence.py` | World reads/writes, locking, journaled commits, and crash recovery. |
+| `app/action_guard.py` | Request receipts against duplicate processing and revisions against stale writes. |
+| `app/llm_client.py` | Provider calls, failures, retries, and mock responses. |
 
-Router gọi lớp xử lý; lớp xử lý dùng storage/LLM. Module nhỏ không nên import ngược `main`, router hoặc module điều phối. Các cầu nối tương thích cũ vẫn là ngoại lệ được giữ để tránh phá tích hợp.
+Routes call service code, and service code uses storage or LLM modules. Small modules should not import `main`, routes, or orchestration modules in reverse. Compatibility bridges are deliberate exceptions retained to avoid breaking integrations.
 
-### Tương thích đang được giữ
+### Compatibility boundaries
 
-`app/compat.py`, `app/engine.py` và `backend/prompts.py` giữ tên import cũ. Các hàm được chuyển khỏi chapter/checkpoint engine vẫn được export lại tại vị trí cũ. Code mới nên import từ module sở hữu hàm. `main.call_llm` và một số điểm thay thế trong test cũ vẫn được hỗ trợ.
+`app/compat.py`, `app/engine.py`, and `backend/prompts.py` preserve legacy import names. Functions moved away from chapter/checkpoint engine modules remain re-exported from their previous locations. New code should import from the owning module. `main.call_llm` and selected legacy-test patch points remain supported.
 
-`backend/models.py` là schema cũ; không thêm model mới vào đây. Nguồn schema hiện hành là `app/models.py`.
+`backend/models.py` is a legacy schema module. Add new models in `app/models.py`.
 
-## Giao diện
+## UI
 
-`ui/src/pages/` nối trang với router. Luồng chơi nằm ở `ui/src/features/play/`:
+`ui/src/pages/` connects pages to the router. The play flow lives in `ui/src/features/play/`:
 
-- `usePlaySession.ts`: trạng thái phiên chơi, tải dữ liệu và hành động người dùng.
-- `PlaySidebar.tsx`: danh sách chương và điều hướng bên trái.
-- `PlayNarrative.tsx`: nội dung truyện và nhập hành động.
-- `PlayInspector.tsx`: các bảng thông tin và công cụ bên phải.
-- `types.ts`: kiểu dữ liệu dùng chung trong tính năng.
+- `usePlaySession.ts` — play-session state, loading, and player actions.
+- `PlaySidebar.tsx` — chapter navigation and world timeline.
+- `PlayNarrative.tsx` — narrative text and action input.
+- `PlayInspector.tsx` — information drawers and creator tools.
+- `types.ts` — feature-shared types.
 
-`PlayPage.tsx` chỉ ghép các phần này. Component dùng lại giữa tính năng tiếp tục nằm trong `src/components/`; không cần chuyển toàn bộ giao diện một lần. Khi một tính năng khác lớn lên, gom hook, component và kiểu riêng vào `features/<tên>/`.
+`PlayPage.tsx` composes these pieces. Reusable cross-feature components remain in `src/components/`. As a different feature grows, give it its own hooks, components, and types in `features/<name>/`.
 
-## Kiểm tra và giới hạn
+## Tests and limits
 
-`backend/tests/` chứa test hồi quy độc lập. `backend/test_engine.py` là bộ kiểm tra cũ chạy tuần tự và dùng trạng thái chung; thêm test mới vào `backend/tests/`. Luôn dùng `backend/run_tests.py` để cô lập dữ liệu và chặn gọi AI thật.
+`backend/tests/` contains independent regression tests. `backend/test_engine.py` is a sequential legacy suite that shares state; add new tests under `backend/tests/`. Always use `backend/run_tests.py` to isolate data and block live AI calls.
 
-Giao diện có test riêng: `ui/src/**/*.test.tsx` chạy bằng Vitest (jsdom, mock `api/client`),
-và `ui/e2e/` chạy bằng Playwright với API giả qua `page.route`. Chạy `npm run test:ui` và
-`npm run test:e2e`; fixture không cần tài khoản, key hay dịch vụ AI thật.
+The UI has two test layers: `ui/src/**/*.test.tsx` uses Vitest with jsdom and a mocked API client; `ui/e2e/` uses Playwright with mocked API routes. Run `npm run test:ui` and `npm run test:e2e`; fixtures must not need accounts, keys, or live AI services.
 
-Đợt sắp xếp này giữ nguyên API, nội dung prompt và định dạng dữ liệu lưu. Chưa thay toàn bộ kiến trúc: điều phối lượt, storage, builder và một số trang khác còn lớn. Tách tiếp theo trách nhiệm khi có thay đổi thực tế và test bảo vệ, tránh tạo quá nhiều lớp chỉ để giảm số dòng.
-
-Test hiện tại dùng AI giả lập, chưa đo chất lượng truyện với model thật. Map player hỗ trợ discovery status; dữ liệu cũ không có field này được xem là đã khám phá để giữ tương thích.
+Automated tests use mock AI responses and do not measure prose quality with live models. Public playtesting should evaluate live generation separately.
