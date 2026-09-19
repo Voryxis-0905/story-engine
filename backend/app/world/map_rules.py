@@ -6,6 +6,42 @@ from app.prompts import LOCATION_MAP_GENERATOR_PROMPT
 import json
 
 
+def reconcile_checkpoint_location_gates(location_map: dict, checkpoints: list,
+                                        character_state: dict) -> dict:
+    """Remove generated gates that make an event venue inaccessible on arrival.
+
+    A checkpoint describes an event, not an EXP reward.  Its venue must be
+    reachable when that checkpoint becomes current.  Explicitly edited maps
+    are unaffected; this runs only on newly generated maps.
+    """
+    locations = location_map.get("locations", [])
+    if not isinstance(locations, list):
+        return location_map
+    initial = next((cp for cp in checkpoints if isinstance(cp, dict)), {})
+    initial_places = set(initial.get("boundary", {}).get("locations", []) or [])
+    initial_places.update(
+        char.get("location") for char in character_state.values()
+        if isinstance(char, dict) and char.get("location")
+    )
+    for loc in locations:
+        if not isinstance(loc, dict):
+            continue
+        name = loc.get("name", "")
+        serving = [cp for cp in checkpoints if isinstance(cp, dict) and
+                   name in (cp.get("boundary", {}).get("locations", []) or [])]
+        if name in initial_places:
+            loc["unlock_realm"] = None
+            loc["unlock_exp"] = 0
+            loc["unlock_checkpoint_id"] = None
+        elif serving:
+            # A player may arrive early and change how the event unfolds.
+            # A checkpoint is not an access requirement for its venue.
+            loc["unlock_realm"] = None
+            loc["unlock_exp"] = 0
+            loc["unlock_checkpoint_id"] = None
+    return location_map
+
+
 def generate_location_map(world_config: dict, checkpoints: list,
                            character_state: dict, world_name: str = None) -> dict:
     from app.storage import has_real_api_key
@@ -53,7 +89,8 @@ def generate_location_map(world_config: dict, checkpoints: list,
                 loc["x"] = max(0, min(100, float(loc.get("x", 0))))
                 loc["y"] = max(0, min(100, float(loc.get("y", 0))))
                 loc["unlock_exp"] = max(0, int(loc.get("unlock_exp", 0)))
-        return {"locations": locations}
+        return reconcile_checkpoint_location_gates(
+            {"locations": locations}, checkpoints or [], character_state or {})
     except (LLMCallError, ValueError, json.JSONDecodeError, TypeError):
         return {"locations": []}
 
@@ -101,6 +138,10 @@ def check_map_based_restrictions(state_changes: dict, location_map: dict,
     current_cp_id = world_config.get("current_checkpoint_id", "")
 
     for char_id, changes in state_changes.get("characters", {}).items():
+        # Map progression gates describe the player's access, not where an
+        # NPC may be present. NPCs need no protagonist EXP to attend events.
+        if char_id != world_config.get("protagonist_id"):
+            continue
         loc = changes.get("location")
         if not loc:
             continue

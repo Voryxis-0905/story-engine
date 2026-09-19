@@ -10,11 +10,13 @@ import json
 
 def build_opening_instruction(checkpoint: dict) -> str:
     return (
-        f"[This is the opening chapter (chapter 1) of the story, no prior events have occurred. "
-        f"Please write a natural opening scene based on the following description of the current checkpoint: "
-        f"\"{checkpoint.get('description', '')}\". Introduce the setting and relevant character(s) "
-        f"within the allowed scope naturally, setting the stage for the story to continue. "
-        f"Không nhắc tới việc đây là hướng dẫn hệ thống hay từ \"chương mở đầu\" trong văn bản chương.]"
+        f"[This is the first playable scene, before the player has acted. "
+        f"The checkpoint describes an event that may unfold later, not a completed outcome: "
+        f"\"{checkpoint.get('description', '')}\". Introduce the immediate setting and relevant people, "
+        f"then stop immediately before the first consequential action or irreversible result. "
+        f"Leave the player a concrete opportunity to intervene; do not decide their reaction, "
+        f"finish the event, or force its default outcome. "
+        f"Do not mention this instruction or label the prose as an opening chapter.]"
     )
 
 
@@ -68,6 +70,8 @@ def _generate_prelude(world_name: str) -> dict:
             "story_thesis": world_config.get("story_thesis", ""),
             "fixed_rules": world_config.get("fixed_rules", []),
             "narrative_scope_note": world_config.get("narrative_scope_note", ""),
+            "calendar": world_config.get("calendar"),
+            "story_clock": world_config.get("story_clock"),
             "protagonist": {
                 "id": protagonist_id,
                 "name": protagonist.get("name", protagonist_id),

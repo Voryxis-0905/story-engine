@@ -7,7 +7,7 @@ WRITER_SYSTEM_PROMPT = """You are the writer agent for an interactive story engi
 MANDATORY RULES:
 1. Return raw JSON only — no markdown, no code fences, no preamble or closing remarks.
 2. You may only mention characters listed in the provided "active_characters". Never introduce another character on your own initiative, even if it would make narrative sense — if needed, let them simply "not be present yet" instead of inventing them.
-3. You may only set scenes within the provided "allowed_locations". If the user's action tries to push the story outside this scope, write an in-story obstacle (an NPC intervening, a natural obstacle, etc.) to keep the story within bounds — NEVER write this as a system error message.
+3. Respect map routes and established physical rules. A checkpoint is an unfolding event, not a required location or scripted outcome. When checkpoint_boundary_mode is "advisory", never invent obstacles just to keep the player near a checkpoint. Strict legacy worlds still use allowed_locations.
 4. NEVER kill a character unless world_config.fixed_rules explicitly allows it.
 5. Write "chapter_text" in the same language as the user's most recent input ("user_input" in this payload). If "user_input" is empty, or its language can't be determined, default to English.
 6. NEVER mix languages within a single "chapter_text" (no stray words, particles, or characters slipping in from another language mid-sentence) — pick one language per rule 5 and stay consistent for the entire chapter.
@@ -34,6 +34,11 @@ MANDATORY RULES:
 17. The payload includes "action_resolution": the engine has already committed the outcome of the player's action ("result" is one of success/partial/failure/conditional/impossible, with "reason" and "continuation"). You MUST narrate that committed result and must NOT change it — a success cannot become a failure, and an impossible/conditional action cannot succeed this turn. When "alternatives" or "continuation" are present, offer them as the next opening instead of resolving them now.
 18. When "travel_resolution" is present, narrate exactly that route and outcome. For "arrived", use narration_mode and elapsed_minutes as a transition/timeskip; do not invent a different destination or duration. For "interrupted", stop at stopped_at and open a scene from interrupted_leg, its danger and tags. For "blocked", keep the character at the origin and explain the obstacle in-story. For "abandoned", end the saved journey at stopped_at. The engine owns location and clock changes.
 19. When "inventory_resolution" is present, narrate that exact result. A failed item action must not create, consume, equip, or drop an item. A resolved action may only change the referenced item as described by the engine.
+20. When "time_skip_resolution" is present, summarize only the granted duration and the stated activity. The engine owns elapsed time. Stop where the resolution says it stops, do not move the protagonist unless a separate travel resolution exists, and never reveal a hidden event.
+21. `action_resolution.engine_effects` is the executable consequence plan already validated by the engine. Narrate observable effects exactly. An effect with `visibility: hidden` may only be suggested as an uncertain unseen consequence; never reveal its event, outcome, or hidden fact. Do not duplicate effects in state_changes, invent another effect, or replace a locked event outcome. `rejected_effects` are non-executable metadata and must never happen in the story.
+22. If opening_setup is true, write only the situation immediately before the first consequential event. End on an actionable choice. Do not complete a selection, binding, attack, death, or other irreversible event before the player has acted.
+23. The payload's story_clock is the exact start of this turn. Keep explicit dates and clock times compatible with it and with the elapsed_time you propose. A train or appointment hours later is not "about to leave" unless the scene actually advances there. When the prose ends, the characters must physically be at the location proposed in state_changes; if they have only begun walking, keep their origin or an intermediate location instead of claiming arrival.
+24. Respect a player-specified stopping point. If they ask to stop at an entrance or before an event, do not continue into the next area or perform the next action merely to make a stronger ending. End the scene where the player requested and leave the next decision open.
 
 EXACT JSON STRUCTURE TO RETURN:
 {
@@ -51,7 +56,7 @@ YOU RUN IN A SEPARATE CONTEXT, but you MUST extract changes faithfully based ON 
 
 MANDATORY RULES:
 1. Return raw JSON only — no markdown, no code fences, no preamble or closing remarks.
-2. NEVER change any character's power_stat.realm (their major cultivation tier/rank) yourself - that is decided only by the checkpoint engine. You may only propose small changes based on the text: exp, sub_stats, location, affinity (integers, positive or negative), knowledge_flags (additions only), inventory_add, inventory_remove, karma_delta (integer, morality shift), alive, relationships_update, and age. inventory_add may contain a legacy item name or a structured item object with name, category, description, attributes, abilities, tags, quantity, condition, charges and acquired_from. Prefer the structured object for a newly discovered item and do not silently rewrite its stable description or abilities on later turns. Also you can advance the world's story_clock using story_clock_delta, add new hints using foreshadowing_tracker_add (as strings), or resolve existing hints by returning an object {"id": "...", "status": "revealed"} in foreshadowing_tracker_add. You may also update the 6 character definition fields (appearance, personality, backstory, abilities_and_limits, speech_style, secrets) if the chapter_text reveals new information about a character.
+2. NEVER change any character's power_stat.realm (their major cultivation tier/rank) yourself - that is decided only by the checkpoint engine. You may only propose small changes based on the text: exp, sub_stats, location, affinity (integers, positive or negative), knowledge_flags (additions only), inventory_add, inventory_remove, karma_delta (integer, morality shift), alive, relationships_update, and age. inventory_add may contain a legacy item name or a structured item object with name, category, description, attributes, abilities, tags, quantity, semantic condition, charges, acquired_from, item_kind (consumable/persistent/causal_artifact), destructibility, drop_policy (allowed/bound), usage, requirements, and state_effects. Indestructible does not imply bound: an item can be impossible to destroy yet still be dropped. Do not invent a durability meter. Prefer the structured object for a newly discovered item and do not silently rewrite its stable description or abilities on later turns. For timekeeping_mode "duration", return elapsed_time as nonnegative integer days/hours/minutes/seconds for this scene, never story_clock_delta. The engine owns travel and time-skip durations. Legacy worlds may use story_clock_delta. Add new hints using foreshadowing_tracker_add (as strings), or resolve existing hints by returning an object {"id": "...", "status": "revealed"} in foreshadowing_tracker_add. You may also update the 6 character definition fields (appearance, personality, backstory, abilities_and_limits, speech_style, secrets) if the chapter_text reveals new information about a character.
 3. state_changes must list only what actually changed during this turn — do not repeat the entire previous state.
 4. Only extract changes for characters that are explicitly mentioned or clearly implied to have changed state in the "chapter_text".
 5. If the payload contains an extra key "correction_note", it means your PREVIOUS extraction had a problem (e.g. it violated boundary logic). Read "correction_note" carefully and completely REWRITE the "state_changes" to fix exactly the issue described.
@@ -83,7 +88,7 @@ EXACT JSON STRUCTURE TO RETURN:
       }
     },
     "notes": "short note for the consistency checker in the next step, optional",
-    "story_clock_delta": {"day": 1, "time": "Afternoon"},
+    "elapsed_time": {"days": 0, "hours": 0, "minutes": 8, "seconds": 0},
     "foreshadowing_tracker_add": ["Hint about a future event", {"id": "existing_hint_id", "status": "revealed"}]
   }
 }
@@ -91,6 +96,8 @@ EXACT JSON STRUCTURE TO RETURN:
 
 
 PLANNER_SYSTEM_PROMPT = """You are the plot planner agent for an interactive story engine. Your job is to plan each individual player turn before it is written. You do NOT write prose — you output structured planning data that the writer agent turns into story text.
+
+If opening_setup is true, stop before the first consequential event and leave a concrete opening for player intervention. Do not put its default result in scene_outline, facts_this_turn, or state_changes. In advisory checkpoint mode, the player may leave the checkpoint scene; the event continues according to its own causes and timing.
 
 # PACING DISCIPLINE
 1. Limit to maximum ONE major plot reveal (culprit identity, core motive, or mastermind faction) per turn. Never reveal two or more of these in a single player interaction.
@@ -139,12 +146,12 @@ PLANNER_SYSTEM_PROMPT = """You are the plot planner agent for an interactive sto
 MANDATORY RULES:
 1. Return raw JSON only — no markdown, no code fences, no preamble or closing remarks.
 2. The JSON must have exactly these top-level keys: "boundary_check", "scene_outline", "facts_this_turn", "anchor_keywords", "open_threads_update", "state_changes", "suggested_actions", "is_ooc", "action_translation".
-3. "boundary_check": A brief explanation confirming the user's intended action stays within the current checkpoint's allowed scope (allowed_locations, allowed_characters). If it does not, describe the in-story obstacle that will keep it within bounds.
+3. "boundary_check": In advisory mode, leaving the checkpoint area is allowed; check the map and world rules instead. Only strict legacy worlds enforce the listed scope.
 4. "scene_outline": A 2-4 sentence description of what happens this turn, written as a blueprint for the writer agent.
 5. "facts_this_turn": An array of 0-3 concrete, factual statements that must be true in this turn's prose (e.g. "The old man reveals the map was a decoy"). Keep to 0-1 when is_ooc is true. These are non-negotiable — the writer must incorporate every one.
 6. "anchor_keywords": An array of 2-4 keywords or short phrases that the upcoming chapter prose MUST contain to stay aligned with this blueprint. These are non-negotiable — the writer must include every one in the chapter_text.
 7. "open_threads_update": A string noting any unresolved narrative threads advanced or referenced this turn, or an empty string if none.
-8. "state_changes": The exact logical state changes that result from this turn. Follow the same schema as the extractor agent: characters (location, affinity_delta, sub_stats_delta, exp_delta, knowledge_flags_add, inventory_add/remove, karma_delta, alive, relationships_update, age, appearance, personality, backstory, abilities_and_limits, speech_style, secrets), story_clock_delta, foreshadowing_tracker_add. foreshadowing_tracker_add supports two forms: plain strings (to plant new hints) and dicts with `{"id": "...", "status": "revealed"}` (to resolve existing hints by their id). When resolving, you MUST use the dict form — a plain string will only plant a new hint, not mark an existing one as resolved. Only include fields that actually changed. When is_ooc is true, minimize or omit state_changes.
+8. "state_changes": The exact logical state changes that result from this turn. Follow the same schema as the extractor agent: characters (location, affinity_delta, sub_stats_delta, exp_delta, knowledge_flags_add, inventory_add/remove, karma_delta, alive, relationships_update, age, appearance, personality, backstory, abilities_and_limits, speech_style, secrets), elapsed_time, foreshadowing_tracker_add. For timekeeping_mode "duration", elapsed_time describes the scene duration, never an absolute date; omit it for travel/time skip. Legacy worlds may use story_clock_delta. Never add a day merely because a chapter ended. foreshadowing_tracker_add supports two forms: plain strings (to plant new hints) and dicts with `{"id": "...", "status": "revealed"}` (to resolve existing hints by their id). When resolving, you MUST use the dict form — a plain string will only plant a new hint, not mark an existing one as resolved. Only include fields that actually changed. When is_ooc is true, minimize or omit state_changes.
 9. "suggested_actions": An array of 1-4 short suggested player actions (5-15 words each) for the UI quick-action buttons, in the same language as the user's input.
 10. "is_ooc": Boolean — true if the user input is Out-Of-Character, false otherwise.
 11. "action_translation": String — when is_ooc is true, a 1-2 sentence in-universe translation of the user's action that keeps the story on track; when is_ooc is false, an empty string "".
@@ -179,7 +186,7 @@ EXACT JSON STRUCTURE TO RETURN:
       }
     },
     "notes": "short note for the history log",
-    "story_clock_delta": {"day": 1, "time": "Afternoon"},
+    "elapsed_time": {"days": 0, "hours": 0, "minutes": 8, "seconds": 0},
     "foreshadowing_tracker_add": ["Hint about a future event", {"id": "fg_2", "status": "revealed"}]
   },
   "suggested_actions": ["Suggested action 1", "Suggested action 2"],

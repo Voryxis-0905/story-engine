@@ -15,6 +15,8 @@ from app import storage, persistence, engine, chapter_generator
 from app.routes import world_routes
 from app.world import schema
 from app.checkpoint_engine import check_map_based_restrictions
+from app.world.map_rules import reconcile_checkpoint_location_gates
+from app.world.calendar_clock import advance_story_clock, normalize_start_clock, normalize_elapsed_time
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -158,6 +160,83 @@ class ReliabilityTests(unittest.TestCase):
                                                           location_map, characters['characters'], self.cfg)
                 self.assertEqual(status['is_unlocked'], not violations)
                 self.assertEqual(status['is_unlocked'], unlocked)
+
+    def test_generated_event_venue_cannot_require_experience_to_enter(self):
+        timeline = [{'checkpoint_id': 'cp_0', 'boundary': {'locations': ['Road']}},
+                    {'checkpoint_id': 'cp_1', 'boundary': {'locations': ['Square']}}]
+        location_map = {'locations': [
+            {'name': 'Road', 'unlock_exp': 30, 'unlock_checkpoint_id': 'cp_2'},
+            {'name': 'Square', 'unlock_exp': 50, 'unlock_checkpoint_id': 'cp_1'},
+            {'name': 'Secret Vault', 'unlock_exp': 80},
+        ]}
+        reconcile_checkpoint_location_gates(location_map, timeline,
+                                            {'hero': {'location': 'Road'}})
+        self.assertEqual(location_map['locations'][0]['unlock_exp'], 0)
+        self.assertIsNone(location_map['locations'][0]['unlock_checkpoint_id'])
+        self.assertEqual(location_map['locations'][1]['unlock_exp'], 0)
+        self.assertIsNone(location_map['locations'][1]['unlock_checkpoint_id'])
+        self.assertEqual(location_map['locations'][2]['unlock_exp'], 80)
+
+    def test_world_calendar_rolls_month_year_and_season(self):
+        calendar = {'kind': 'custom', 'months': [
+            {'name': 'Ebb', 'days': 2}, {'name': 'Flood', 'days': 3}],
+            'seasons': [{'name': 'Quiet Sea', 'months': [1]},
+                        {'name': 'Black Tide', 'months': [2]}]}
+        clock = normalize_start_clock({'year': 7, 'month': 1, 'day': 2,
+                                       'minute_of_day': 1439}, calendar)
+        advance_story_clock(clock, normalize_elapsed_time({'seconds': 90}), calendar)
+        self.assertEqual((clock['year'], clock['month'], clock['day']), (7, 2, 1))
+        self.assertEqual((clock['minute_of_day'], clock['second_of_day']), (0, 30))
+        self.assertEqual(clock['season'], 'Black Tide')
+        advance_story_clock(clock, normalize_elapsed_time({'days': 3}), calendar)
+        self.assertEqual((clock['year'], clock['month'], clock['day']), (8, 1, 1))
+
+    def test_gregorian_calendar_respects_leap_day(self):
+        calendar = {'kind': 'gregorian'}
+        clock = normalize_start_clock({'year': 2024, 'month': 2, 'day': 28,
+                                       'minute_of_day': 600}, calendar)
+        advance_story_clock(clock, normalize_elapsed_time({'days': 1}), calendar)
+        self.assertEqual((clock['year'], clock['month'], clock['day']), (2024, 2, 29))
+
+    def test_duration_mode_ignores_legacy_day_delta_from_model(self):
+        cfg = self.read('world_config.json')
+        cfg['timekeeping_mode'] = 'duration'
+        cfg['calendar'] = {'kind': 'gregorian'}
+        cfg['story_clock'] = normalize_start_clock(
+            {'year': 2026, 'month': 9, 'day': 19, 'minute_of_day': 1260}, cfg['calendar'])
+        self.write('world_config.json', cfg)
+        def timed_llm(system_prompt, user_prompt, user_input_for_mock='', mock_response=None,
+                      world_name=None, role=None):
+            if system_prompt == main.PLANNER_SYSTEM_PROMPT:
+                planned = json.loads(main.mock_planner_response(user_input_for_mock))
+                planned.setdefault('state_changes', {})['elapsed_time'] = {
+                    'days': 0, 'hours': 0, 'minutes': 8, 'seconds': 0}
+                planned['state_changes']['story_clock_delta'] = {'day': 1}
+                return json.dumps(planned)
+            if system_prompt == main.WRITER_SYSTEM_PROMPT:
+                written = json.loads(main.mock_narrator_response(user_input_for_mock))
+                written.setdefault('state_changes', {})['elapsed_time'] = {
+                    'days': 0, 'hours': 0, 'minutes': 8, 'seconds': 0}
+                written['state_changes']['story_clock_delta'] = {'day': 1}
+                return json.dumps(written)
+            return self.fake_llm(system_prompt, user_prompt, user_input_for_mock,
+                                 mock_response, world_name, role)
+        with patch.object(main, 'call_llm', side_effect=timed_llm):
+            response = self.post('chapter/continue', {'user_input': 'Speak briefly.'})
+        self.assertEqual(response.status_code, 200, response.text)
+        clock = self.read('world_config.json')['story_clock']
+        self.assertEqual((clock['day'], clock['minute_of_day']), (19, 1268))
+        self.assertEqual(clock['tick'], 1)
+
+    def test_opening_scene_does_not_tick_or_resolve_pending_event(self):
+        cfg = self.read('world_config.json')
+        cfg['timekeeping_mode'] = 'duration'
+        self.write('world_config.json', cfg)
+        self.setup_event()
+        response = self.post('chapter/start')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.read('world_config.json')['story_clock']['tick'], 0)
+        self.assertEqual(self.read('world_events.json')['events'][0]['status'], 'pending')
 
     def test_structured_inventory_is_exposed_and_legacy_items_still_work(self):
         characters = self.read('character_state.json')
@@ -714,6 +793,48 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(good['status'], 'passed')
         bad_major = parse_checker_response('{"consistent":false,"severity":"major","issues":["x"],"explanation":""}')
         self.assertEqual(bad_major['status'], 'failed')
+
+    def test_checker_receives_clock_window_and_proposed_location(self):
+        from app.story.consistency import build_consistency_checker_payload
+        config = {
+            'timekeeping_mode': 'duration', 'calendar': {'kind': 'gregorian'},
+            'protagonist_id': 'hero',
+            'story_clock': normalize_start_clock(
+                {'year': 2024, 'month': 9, 'day': 15, 'minute_of_day': 1045},
+                {'kind': 'gregorian'}),
+        }
+        payload = build_consistency_checker_payload(
+            'They only step outside the bookshop.',
+            {'characters': {'hero': {'location': 'Station South Exit'}},
+             'elapsed_time': {'minutes': 4}},
+            config, {}, [], {'hero': {'location': 'Bookshop'}},
+        )
+        alignment = payload['temporal_spatial_alignment']
+        self.assertEqual(alignment['clock_at_turn_start']['minute_of_day'], 1045)
+        self.assertEqual(alignment['clock_after_proposed_turn']['minute_of_day'], 1049)
+        self.assertEqual(alignment['protagonist_location_before'], 'Bookshop')
+        self.assertEqual(alignment['protagonist_location_after_proposed_turn'], 'Station South Exit')
+
+    def test_state_sync_failure_blocks_commit_even_when_lore_passes(self):
+        from app.story.consistency import parse_checker_response
+        result = parse_checker_response(json.dumps({
+            'consistent': True, 'severity': 'minor', 'state_sync': False,
+            'issues': ['State says station; prose ends outside bookshop.'],
+            'explanation': 'The proposed location is ahead of the scene.',
+        }))
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['severity'], 'major')
+
+    def test_player_stop_point_is_blocking_even_when_state_matches_prose(self):
+        from app.story.consistency import parse_checker_response
+        result = parse_checker_response(json.dumps({
+            'consistent': True, 'severity': 'minor', 'state_sync': True,
+            'action_scope': False,
+            'issues': ['The player stopped at the entrance; prose walked onto the veranda.'],
+            'explanation': 'The scene passed the requested stopping point.',
+        }))
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['severity'], 'major')
 
     def test_successful_rewrite_is_rechecked_and_passes(self):
         calls = {'n': 0}
@@ -2060,6 +2181,210 @@ class ReliabilityTests(unittest.TestCase):
         turns = self.read('chapters.json')['chapters']
         self.assertEqual(len(turns), 2)
         self.assertEqual(len({(t['chapter_index'], t['turn_index']) for t in turns}), 2)
+
+    def test_time_skip_preview_warns_only_about_discovered_deadlines_and_is_read_only(self):
+        self.write('world_events.json', {'events': [
+            {'event_id': 'known', 'status': 'pending', 'title': 'Known storm', 'deadline_tick': 3},
+            {'event_id': 'secret', 'status': 'pending', 'title': 'Secret coup', 'deadline_tick': 2},
+        ]})
+        self.write('discovery.json', {'discoveries': [{
+            'event_id': 'known', 'source': {'kind': 'rumor'}, 'at_tick': 0, 'known_deadline_tick': 3,
+        }]})
+        before = {p.name: p.read_bytes() for p in self.path.glob('*.json')}
+        response = self.post('time-skip/preview', {
+            'amount': 1, 'unit': 'days', 'activity': 'Study', 'interruption_policy': 'important_events',
+        })
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual([w['event_id'] for w in body['warnings']], ['known'])
+        self.assertTrue(body['will_interrupt'])
+        self.assertEqual(body['granted_ticks'], 2)
+        self.assertEqual(body['end_tick'], 2)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.path.glob('*.json')})
+
+        config = self.read('world_config.json')
+        config['story_clock']['tick'] = 2
+        self.write('world_config.json', config)
+        imminent = self.post('time-skip/execute', {
+            'amount': 1, 'unit': 'hours', 'activity': 'Wait',
+            'interruption_policy': 'important_events',
+        })
+        self.assertEqual(imminent.status_code, 409)
+        self.assertEqual(imminent.json()['detail']['reason'], 'known_deadline_imminent')
+        self.assertEqual(len(self.read('chapters.json')['chapters']), 0)
+
+    def test_time_skip_execute_owns_clock_and_is_idempotent(self):
+        request = {
+            'amount': 2, 'unit': 'hours', 'activity': 'Practice forms',
+            'interruption_policy': 'complete', 'request_id': 'skip-once',
+        }
+        first = self.post('time-skip/execute', request)
+        self.assertEqual(first.status_code, 200, first.text)
+        clock = self.read('world_config.json')['story_clock']
+        self.assertEqual(clock['elapsed_minutes'], 120)
+        self.assertEqual(clock['tick'], 2)
+        self.assertEqual(first.json()['chapter']['time_skip_resolution']['granted_minutes'], 120)
+        turns = len(self.read('chapters.json')['chapters'])
+        replay = self.post('time-skip/execute', request)
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(self.read('world_config.json')['story_clock'], clock)
+        self.assertEqual(len(self.read('chapters.json')['chapters']), turns)
+
+    def test_capability_evidence_satisfies_rule_without_numeric_rank(self):
+        from app.story.action_resolution import resolve_action
+        character = {'hero': {
+            'location': 'dojo', 'inventory': [], 'power_stat': {},
+            'capabilities': [{'capability_id': 'swordsmanship', 'statement': 'Former royal swordmaster',
+                              'proficiency': 'mastered', 'sources': ['backstory']}],
+        }}
+        config = {'action_rules': [{'keywords': ['parry'], 'required_capabilities': ['swordsmanship']}]}
+        result = resolve_action('Parry the blow', character, 'hero', config)
+        self.assertEqual(result['result'], 'success')
+        evidence = next(c for c in result['checks'] if c['name'] == 'capability_evidence')['evidence']
+        self.assertEqual(evidence[0]['evidence']['sources'], ['backstory'])
+
+    def test_custom_openai_endpoint_does_not_rewrite_model_as_openclaw(self):
+        from app.llm_client import _is_openclaw_target
+        self.assertFalse(_is_openclaw_target('custom', 'https://api.deepseek.com/chat/completions'))
+        self.assertTrue(_is_openclaw_target('openclaw', 'https://any.example/v1'))
+        self.assertTrue(_is_openclaw_target('custom', 'http://127.0.0.1:18789/v1/chat/completions'))
+
+    def test_committed_action_effects_drive_event_outcome_before_default(self):
+        config = self.read('world_config.json')
+        config['action_rules'] = [{
+            'keywords': ['sever the crimson seal'],
+            'consequences': [
+                {'type': 'world_flag_set', 'key': 'seal_broken', 'value': True},
+                {'type': 'event_influence', 'event_id': 'eclipse', 'key': 'seal_broken',
+                 'value': True, 'outcome_id': 'eclipse_prevented', 'visibility': 'observable'},
+                {'type': 'knowledge_flag_add', 'flag': 'severed_crimson_seal'},
+            ],
+        }]
+        self.write('world_config.json', config)
+        self.write('world_events.json', {'events': [{
+            'event_id': 'eclipse', 'status': 'pending', 'event_class': 'contingent',
+            'trigger_conditions': [{'field': 'story_clock.tick', 'op': '>=', 'value': 1}],
+            # The default is deliberately first. Engine intervention must win.
+            'outcomes': [
+                {'outcome_id': 'eclipse_happens', 'resolution': 'resolved',
+                 'canon_facts_add': ['The eclipse consumed the valley.']},
+                {'outcome_id': 'eclipse_prevented', 'resolution': 'prevented',
+                 'canon_facts_add': ['The broken seal dispersed the eclipse.']},
+            ],
+        }]})
+        response = self.post('chapter/continue', {
+            'user_input': 'Sever the crimson seal.', 'request_id': 'bridge-once',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        chapter = response.json()['chapter']
+        self.assertEqual(len(chapter['action_effects']['applied']), 3)
+        self.assertEqual(chapter['action_resolution']['engine_effects'][1]['outcome_id'], 'eclipse_prevented')
+        world = self.read('world_config.json')
+        self.assertTrue(world['world_flags']['seal_broken'])
+        self.assertTrue(world['world_flags']['event_influence']['eclipse']['seal_broken'])
+        hero = self.read('character_state.json')['characters']['char_xueli']
+        self.assertIn('severed_crimson_seal', hero['knowledge_flags'])
+        event = self.read('world_events.json')['events'][0]
+        self.assertEqual(event['status'], 'prevented')
+        self.assertEqual(event['resolved_outcome_id'], 'eclipse_prevented')
+        facts = [fact['statement'] for fact in self.read('world_canon_store.json')['facts']]
+        self.assertEqual(facts, ['The broken seal dispersed the eclipse.'])
+        self.assertEqual(len(event['interventions']), 1)
+
+        replay = self.post('chapter/continue', {
+            'user_input': 'Sever the crimson seal.', 'request_id': 'bridge-once',
+        })
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(len(self.read('world_events.json')['events'][0]['interventions']), 1)
+
+    def test_hidden_event_effect_projection_does_not_reveal_secret_branch(self):
+        from app.story.action_effects import compile_action_effects, project_action_effects
+
+        plan = compile_action_effects({
+            'result': 'success',
+            'consequences': [{
+                'type': 'event_influence', 'event_id': 'secret_eclipse',
+                'key': 'seal_broken', 'value': True,
+                'outcome_id': 'secret_eclipse_prevented',
+            }],
+        }, 'hero', {'hero': {}}, {'events': [{
+            'event_id': 'secret_eclipse', 'status': 'pending',
+            'outcomes': [{'outcome_id': 'secret_eclipse_prevented'}],
+        }]})
+
+        self.assertEqual(plan['effects'][0]['event_id'], 'secret_eclipse')
+        self.assertEqual(plan['effects'][0]['outcome_id'], 'secret_eclipse_prevented')
+        public = project_action_effects(plan)['effects'][0]
+        self.assertEqual(public['visibility'], 'hidden')
+        self.assertNotIn('event_id', public)
+        self.assertNotIn('outcome_id', public)
+        self.assertNotIn('seal_broken', str(public))
+        rejected = project_action_effects({'effects': [], 'rejected': [{
+            'index': 0, 'type': 'event_influence', 'reason': 'event_not_pending',
+            'event_id': 'secret_eclipse',
+        }]})['rejected'][0]
+        self.assertNotIn('event_id', rejected)
+        self.assertNotIn('secret_eclipse', str(rejected))
+
+    def test_failed_or_unsupported_action_effects_cannot_mutate_world(self):
+        config = self.read('world_config.json')
+        config['action_rules'] = [{
+            'keywords': ['open forbidden gate'], 'required_tools': ['silver key'],
+            'consequences': [
+                {'type': 'world_flag_set', 'key': 'gate_open', 'value': True},
+                {'type': 'set', 'path': 'characters.char_xueli.alive', 'value': False},
+            ],
+        }]
+        self.write('world_config.json', config)
+        response = self.post('chapter/continue', {'user_input': 'Open forbidden gate.'})
+        self.assertEqual(response.status_code, 200)
+        chapter = response.json()['chapter']
+        self.assertEqual(chapter['action_resolution']['result'], 'impossible')
+        self.assertEqual(chapter['action_effects']['applied'], [])
+        self.assertNotIn('gate_open', self.read('world_config.json').get('world_flags', {}))
+        self.assertTrue(self.read('character_state.json')['characters']['char_xueli']['alive'])
+
+    def test_creator_can_preview_and_replace_action_rules(self):
+        revision = self.read('world_config.json').get('revision', 0)
+        rules = [{'keywords': ['ring bell'], 'consequences': [
+            {'type': 'world_flag_set', 'key': 'bell_rung', 'value': True},
+        ]}]
+        payload = {'expected_revision': revision, 'preview': True, 'reason': 'Add bell interaction',
+                   'changes': [{'kind': 'action_rules', 'value': rules}]}
+        preview = self.post('creator/edit', payload)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertTrue(preview.json()['ok'])
+        self.assertNotEqual(self.read('world_config.json').get('action_rules'), rules)
+        payload['preview'] = False
+        committed = self.post('creator/edit', payload)
+        self.assertEqual(committed.status_code, 200, committed.text)
+        self.assertEqual(self.read('world_config.json')['action_rules'], rules)
+
+    def test_item_policies_protect_causal_items_and_require_capability(self):
+        from app.story.inventory import resolve_inventory_action, apply_item_state_effects, apply_inventory_resolution, normalize_item
+        artifact = {'instance_id': 'world-key-1', 'name': 'World Key', 'item_kind': 'causal_artifact', 'drop_policy': 'bound',
+                    'requirements': ['ritual literacy']}
+        self.assertEqual(resolve_inventory_action('Drop World Key', [artifact], {})['reason'],
+                         'item_is_bound')
+        self.assertEqual(resolve_inventory_action('Use World Key', [artifact], {})['reason'],
+                         'capability_required')
+        character = {'capabilities': [{'capability_id': 'ritual_literacy', 'statement': 'Reads ritual script'}]}
+        artifact['state_effects'] = [
+            {'path': 'status_effects', 'operation': 'add', 'value': {'name': 'Marked by the Key', 'duration': 3}},
+            {'path': 'power_stat.realm', 'operation': 'replace', 'value': 'forbidden'},
+        ]
+        resolution = resolve_inventory_action('Use World Key', [artifact], character)
+        self.assertEqual(resolution['status'], 'resolved')
+        applied = apply_item_state_effects(character, resolution, at_tick=4)
+        self.assertEqual([e['name'] for e in applied], ['Marked by the Key'])
+        self.assertNotIn('power_stat', character)
+        tea = {'instance_id': 'tea', 'name': 'Tea', 'quantity': 2, 'stackable': True,
+               'item_kind': 'consumable', 'usage': {'mode': 'quantity', 'remaining': 2}}
+        tea_resolution = resolve_inventory_action('Use Tea', [tea], {})
+        inventory = [tea]
+        apply_inventory_resolution(inventory, tea_resolution)
+        self.assertEqual(normalize_item(inventory[0])['quantity'], 1)
+        self.assertEqual(normalize_item(inventory[0])['usage']['remaining'], 1)
 
 
 if __name__ == '__main__':

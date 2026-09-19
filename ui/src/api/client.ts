@@ -26,6 +26,7 @@ export interface PlayState {
     alive: boolean;
     relationships: Record<string, any>;
     age: string;
+    capabilities?: CapabilityEvidence[];
   } | null;
   arc_progress: {
     current_checkpoint_id: string;
@@ -35,6 +36,8 @@ export interface PlayState {
   };
   unlocked_cards: any[];
   story_clock: Record<string, any>;
+  calendar?: { kind: string; months?: { name: string; days: number }[]; year_label?: string; era?: string } | null;
+  prelude_confirmed?: boolean;
   foreshadowing_tracker: any[];
   style_card: any;
   output_length?: string;
@@ -86,6 +89,48 @@ export interface InventoryItem {
   charges?: number | null;
   acquired_at_tick?: number | null;
   acquired_from?: string | null;
+  item_kind?: 'consumable' | 'persistent' | 'causal_artifact' | string;
+  destructibility?: 'normal' | 'protected' | 'indestructible' | string;
+  drop_policy?: 'allowed' | 'bound' | string;
+  usage?: { mode: 'unlimited' | 'charges' | 'quantity' | 'narrative' | string; remaining?: number };
+  requirements?: Array<string | Record<string, any>>;
+  state_effects?: Array<Record<string, any>>;
+}
+
+export interface CapabilityEvidence {
+  capability_id: string;
+  statement: string;
+  proficiency?: string;
+  sources?: string[];
+  limits?: string[];
+  tags?: string[];
+}
+
+export interface TimeSkipRequest {
+  amount: number;
+  unit: 'minutes' | 'hours' | 'days' | 'weeks';
+  activity: string;
+  interruption_policy: 'important_events' | 'known_quest_deadlines' | 'immediate_danger' | 'complete' | 'ask';
+  narration_detail?: 'brief' | 'standard' | 'detailed';
+  force?: boolean;
+  request_id?: string;
+  expected_revision?: number;
+}
+
+export interface TimeSkipPreview {
+  requested_minutes: number;
+  granted_minutes: number;
+  requested_ticks: number;
+  granted_ticks: number;
+  start_tick: number;
+  end_tick: number;
+  warnings: Array<{ kind: string; event_id: string; title: string; deadline_tick: number; ticks_away: number }>;
+  will_interrupt: boolean;
+  stopped_reason?: string | null;
+  requires_confirmation: boolean;
+  activity: string;
+  forced: boolean;
+  blocked?: boolean;
 }
 
 export interface ChapterContinueResponse {
@@ -214,6 +259,14 @@ export const api = {
           request_id: opts?.requestId,
           expected_revision: opts?.expectedRevision,
         }),
+      }),
+    previewTimeSkip: (worldName: string, req: TimeSkipRequest) =>
+      fetchJSON<TimeSkipPreview>(`/worlds/${worldName}/time-skip/preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+      }),
+    executeTimeSkip: (worldName: string, req: TimeSkipRequest) =>
+      fetchJSON<ChapterContinueResponse>(`/worlds/${worldName}/time-skip/execute`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
       }),
     regenerate: (worldName: string, opts?: { requestId?: string; expectedRevision?: number }) =>
       fetchJSON<any>(`/worlds/${worldName}/chapter/regenerate`, {

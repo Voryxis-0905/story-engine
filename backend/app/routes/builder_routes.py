@@ -26,6 +26,7 @@ from app.models import (
     ImportWorldRequest
 )
 from app.services.validators import validate_world_bundle
+from app.world.calendar_clock import normalize_calendar, normalize_start_clock
 
 try:
     from prompts import WORLD_BUILDER_INTERVIEW_PROMPT as _WBI
@@ -337,6 +338,18 @@ def world_builder_step(world_name: str):
                 res_cfg = {}
 
             new_cfg = {**TEMPLATES["world_config.json"], **cfg, **res_cfg}
+            calendar_candidate = res_cfg.get("calendar")
+            if not isinstance(calendar_candidate, dict):
+                genre = str(new_cfg.get("genre", "")).lower()
+                calendar_candidate = {"kind": "gregorian"} if any(
+                    word in genre for word in ("modern", "contemporary", "romance", "romcom", "slice of life")
+                ) else {"kind": "custom"}
+            new_cfg["calendar"] = normalize_calendar(calendar_candidate)
+            initial_clock = res_cfg.get("story_clock")
+            if not isinstance(initial_clock, dict):
+                initial_clock = {}
+            new_cfg["story_clock"] = normalize_start_clock(initial_clock, new_cfg["calendar"])
+            new_cfg["timekeeping_mode"] = "duration"
             new_cfg["scope_selector"] = scope
             new_cfg["narrative_scope_note"] = prompt
 
@@ -518,6 +531,7 @@ def world_builder_step(world_name: str):
                     json.dumps([r for r in sanitize_result if r.get("removed")], ensure_ascii=False)
                 )
 
+            cfg["checkpoint_boundary_mode"] = "advisory"
             cfg["creation_status"] = "complete"
             write_world_file(world_path, "world_config.json", cfg)
             bump_world_revision(world_path)

@@ -38,6 +38,8 @@ TEMPLATES = {
         "prelude_enabled": False,
         "prelude_confirmed": False,
         "language": "en",
+        "calendar": None,
+        "timekeeping_mode": "legacy",
         "story_clock": {
             "year": 1,
             "month": 1,

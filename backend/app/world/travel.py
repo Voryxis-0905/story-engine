@@ -199,27 +199,8 @@ def build_travel_plan(user_input: str, location_map: dict, current_location: str
     return result
 
 
-def advance_clock_minutes(clock: dict, minutes: int) -> None:
+def advance_clock_minutes(clock: dict, minutes: int, calendar_config: dict = None) -> None:
+    from app.world.calendar_clock import advance_story_clock
     if not isinstance(clock, dict) or minutes <= 0:
         return
-    current = clock.get("minute_of_day")
-    if not isinstance(current, int):
-        current = {"morning": 480, "afternoon": 840, "evening": 1140, "night": 1380}.get(
-            str(clock.get("time_of_day", "morning")).lower(), 480
-        )
-    total = current + int(minutes)
-    days, minute = divmod(total, 1440)
-    clock["minute_of_day"] = minute
-    clock["elapsed_minutes"] = int(clock.get("elapsed_minutes", 0) or 0) + int(minutes)
-    day = max(1, int(clock.get("day", 1) or 1) + days)
-    month = max(1, int(clock.get("month", 1) or 1))
-    year = max(1, int(clock.get("year", 1) or 1))
-    while day > 30:
-        day -= 30
-        month += 1
-    while month > 12:
-        month -= 12
-        year += 1
-    clock["day"], clock["month"], clock["year"] = day, month, year
-    hour = minute // 60
-    clock["time_of_day"] = "morning" if 5 <= hour < 12 else "afternoon" if hour < 17 else "evening" if hour < 22 else "night"
+    advance_story_clock(clock, {"total_seconds": int(minutes) * 60}, calendar_config)

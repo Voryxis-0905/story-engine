@@ -1,9 +1,14 @@
 import type { PlaySession } from './usePlaySession';
-import { ArrowPathIcon, ChevronDownIcon, ChevronUpIcon, PaperAirplaneIcon, PlayIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { useEffect, useState } from 'react';
+import type { TimeSkipRequest } from '../../api/client';
+import { ArrowPathIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, PaperAirplaneIcon, PlayIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
-type Props = Pick<PlaySession, 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'draft' | 'handleDismissDraft' | 'handleRetryDraft' | 'epilogue' | 'lifecycleStatus' | 'epilogueChoices' | 'handleLoadEndgameChoices' | 'handleChooseEnding' | 'chatEndRef' | 'handleSend' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
+type Props = Pick<PlaySession, 'playState' | 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'draft' | 'handleDismissDraft' | 'handleRetryDraft' | 'epilogue' | 'lifecycleStatus' | 'epilogueChoices' | 'handleLoadEndgameChoices' | 'handleChooseEnding' | 'chatEndRef' | 'handleSend' | 'timeSkipOpen' | 'setTimeSkipOpen' | 'timeSkipPreview' | 'timeSkipLoading' | 'handlePreviewTimeSkip' | 'handleExecuteTimeSkip' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
 
-export function PlayNarrative({ turns, input, setInput, loading, error, setError, outputLength, setOutputLength, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, draft, handleDismissDraft, handleRetryDraft, epilogue, lifecycleStatus, epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
+export function PlayNarrative({ playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, draft, handleDismissDraft, handleRetryDraft, epilogue, lifecycleStatus, epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
+  const [skip, setSkip] = useState<TimeSkipRequest>({ amount: 1, unit: 'hours', activity: '', interruption_policy: 'important_events', narration_detail: 'standard', force: false });
+  const [previewedSkip, setPreviewedSkip] = useState('');
+  useEffect(() => { if (!timeSkipOpen) { setSkip(s => ({ ...s, force: false })); setPreviewedSkip(''); } }, [timeSkipOpen]);
   return (<>
       {/* CENTER NARRATIVE MAIN VIEW */}
       <main className="flex-1 flex flex-col h-full bg-[var(--bg-surface)] relative">
@@ -114,19 +119,19 @@ export function PlayNarrative({ turns, input, setInput, loading, error, setError
               ) : null}
 
               <div className="flex items-center justify-center gap-4 pt-4 border-t border-[var(--line)]">
-                <button
+                {!playState?.prelude_confirmed && <button
                   onClick={handleGeneratePrelude}
                   disabled={loading}
                   className="pill-btn pill-btn-secondary px-6 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
                 >
                   Generate Prelude
-                </button>
+                </button>}
                 <button
-                  onClick={handleConfirmPrelude}
+                  onClick={playState?.prelude_confirmed ? handleStartChapter : handleConfirmPrelude}
                   disabled={loading}
                   className="pill-btn pill-btn-primary px-6 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
                 >
-                  Confirm Prelude & Play
+                  {playState?.prelude_confirmed ? 'Begin Story' : 'Confirm Prelude & Play'}
                 </button>
               </div>
             </div>
@@ -288,7 +293,30 @@ export function PlayNarrative({ turns, input, setInput, loading, error, setError
         {/* Bottom Action Input Bar */}
         {lifecycleStatus !== 'completed' && (
         <div className="p-4 border-t border-[var(--line-2)] glass-panel z-10">
+          {timeSkipOpen && (
+            <div className="max-w-4xl mx-auto mb-3 p-4 rounded-2xl bg-[var(--bg-surface)] border border-[var(--line)] shadow-[var(--shadow-md)] space-y-3">
+              <div className="flex items-center justify-between">
+                <div><p className="font-bold text-sm text-[var(--ink-main)]">Advance world time</p><p className="text-xs text-[var(--ink-soft)]">The world may interrupt the skip at a deadline you already know.</p></div>
+                <button onClick={() => setTimeSkipOpen(false)} aria-label="Close time skip"><XMarkIcon className="w-5 h-5" /></button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <label className="text-xs font-bold text-[var(--ink-soft)]">Duration
+                  <div className="flex mt-1"><input aria-label="Time skip amount" type="number" min="1" value={skip.amount} onChange={e => setSkip({ ...skip, amount: Math.max(1, Number(e.target.value)) })} className="w-20 px-3 py-2 rounded-l-xl border bg-[var(--bg-subtle)]" /><select aria-label="Time skip unit" value={skip.unit} onChange={e => setSkip({ ...skip, unit: e.target.value as TimeSkipRequest['unit'] })} className="flex-1 px-2 border rounded-r-xl bg-[var(--bg-subtle)]"><option value="minutes">minutes</option><option value="hours">hours</option><option value="days">days</option><option value="weeks">weeks</option></select></div>
+                </label>
+                <label className="text-xs font-bold text-[var(--ink-soft)]">What do you do?
+                  <input aria-label="Time skip activity" value={skip.activity} onChange={e => setSkip({ ...skip, activity: e.target.value })} placeholder="Rest, study, wait..." className="mt-1 w-full px-3 py-2 rounded-xl border bg-[var(--bg-subtle)]" />
+                </label>
+                <label className="text-xs font-bold text-[var(--ink-soft)]">When should it stop?
+                  <select aria-label="Interruption policy" value={skip.interruption_policy} onChange={e => setSkip({ ...skip, interruption_policy: e.target.value as TimeSkipRequest['interruption_policy'] })} className="mt-1 w-full px-3 py-2 rounded-xl border bg-[var(--bg-subtle)]"><option value="important_events">At important known events</option><option value="known_quest_deadlines">At known quest deadlines</option><option value="immediate_danger">Only for immediate danger</option><option value="complete">Complete the full duration</option><option value="ask">Ask at interruptions</option></select>
+                </label>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-[var(--ink-soft)]"><input type="checkbox" checked={!!skip.force} onChange={e => setSkip({ ...skip, force: e.target.checked })} /> Creator override: ignore known deadline stops</label>
+              {timeSkipPreview && <div className="p-3 rounded-xl bg-[var(--bg-subtle)] text-xs text-[var(--ink-main)]"><p><b>Preview:</b> {timeSkipPreview.blocked ? 'Time cannot advance safely; act now.' : `${timeSkipPreview.granted_minutes} of ${timeSkipPreview.requested_minutes} minutes will pass.`}</p>{timeSkipPreview.warnings.map(w => <p key={w.event_id} className="mt-1 text-[var(--warn)]">⚠ {w.title} reaches its known deadline in {w.ticks_away} tick(s).</p>)}</div>}
+              <div className="flex justify-end gap-2"><button onClick={async () => { await handlePreviewTimeSkip(skip); setPreviewedSkip(JSON.stringify(skip)); }} disabled={timeSkipLoading || loading} className="pill-btn pill-btn-secondary px-4 py-2 text-xs">{timeSkipLoading ? 'Checking...' : 'Preview'}</button><button onClick={() => handleExecuteTimeSkip(skip)} disabled={!timeSkipPreview || !!timeSkipPreview.blocked || previewedSkip !== JSON.stringify(skip) || loading} className="pill-btn pill-btn-primary px-4 py-2 text-xs">Confirm skip</button></div>
+            </div>
+          )}
           <div className="max-w-4xl mx-auto flex items-center gap-3">
+            <button onClick={() => setTimeSkipOpen(!timeSkipOpen)} disabled={loading} className="pill-btn pill-btn-secondary p-3.5 rounded-2xl" title="Advance time"><ClockIcon className="w-5 h-5" /></button>
             <input
               type="text"
               value={input}

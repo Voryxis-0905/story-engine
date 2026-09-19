@@ -38,6 +38,8 @@ def _stack_signature(item: dict) -> str:
         "charges": item.get("charges"),
         "equipped": bool(item.get("equipped", False)),
         "custom_name": item.get("custom_name"),
+        "item_kind": item.get("item_kind"),
+        "usage": item.get("usage"),
     }
     return json.dumps(fields, sort_keys=True, ensure_ascii=False, default=str)
 
@@ -52,7 +54,9 @@ def normalize_item(item: Any, *, owner_id: str = "") -> dict:
             "abilities": [], "tags": [], "quantity": 1, "condition": "intact",
             "stackable": False, "custom_name": None,
             "equipped": False, "charges": None, "acquired_at_tick": None,
-            "acquired_from": None,
+            "acquired_from": None, "item_kind": "persistent",
+            "destructibility": "normal", "usage": {"mode": "unlimited"},
+            "drop_policy": "allowed", "requirements": [], "state_effects": [],
         }
     if not isinstance(item, dict):
         return normalize_item(str(item), owner_id=owner_id)
@@ -62,21 +66,48 @@ def normalize_item(item: Any, *, owner_id: str = "") -> dict:
         quantity = max(1, int(item.get("quantity", 1) or 1))
     except (TypeError, ValueError):
         quantity = 1
+    tags = item.get("tags") if isinstance(item.get("tags"), list) else []
+    category = str(item.get("category") or "misc")
+    charges = item.get("charges")
+    inferred_kind = "consumable" if ("consumable" in [str(t).lower() for t in tags] or category.lower() == "consumable") else "persistent"
+    item_kind = str(item.get("item_kind") or inferred_kind)
+    usage = item.get("usage") if isinstance(item.get("usage"), dict) else None
+    if usage is None:
+        if isinstance(charges, (int, float)):
+            usage = {"mode": "charges", "remaining": max(0, int(charges))}
+        elif item_kind == "consumable":
+            usage = {"mode": "quantity", "remaining": quantity}
+        else:
+            usage = {"mode": "unlimited"}
+    else:
+        usage = dict(usage)
+    # Quantity and legacy charges are engine-owned counters. Keep the display
+    # metadata synchronized even when an older item stored a stale `remaining`.
+    if usage.get("mode") == "quantity":
+        usage["remaining"] = quantity
+    elif usage.get("mode") == "charges" and isinstance(charges, (int, float)):
+        usage["remaining"] = max(0, int(charges))
     return {
         "instance_id": str(item.get("instance_id") or f"inv_{digest}"),
         "item_id": item.get("item_id"), "name": name,
-        "category": str(item.get("category") or "misc"),
+        "category": category,
         "description": str(item.get("description") or ""),
         "attributes": item.get("attributes") if isinstance(item.get("attributes"), dict) else {},
         "abilities": item.get("abilities") if isinstance(item.get("abilities"), list) else [],
-        "tags": item.get("tags") if isinstance(item.get("tags"), list) else [],
+        "tags": tags,
         "quantity": quantity,
         "stackable": bool(item.get("stackable", False)),
         "custom_name": item.get("custom_name"),
         "condition": str(item.get("condition") or "intact"),
-        "equipped": bool(item.get("equipped", False)), "charges": item.get("charges"),
+        "equipped": bool(item.get("equipped", False)), "charges": charges,
         "acquired_at_tick": item.get("acquired_at_tick"),
         "acquired_from": item.get("acquired_from"),
+        "item_kind": item_kind,
+        "destructibility": str(item.get("destructibility") or ("protected" if item_kind == "causal_artifact" else "normal")),
+        "drop_policy": str(item.get("drop_policy") or "allowed"),
+        "usage": usage,
+        "requirements": item.get("requirements") if isinstance(item.get("requirements"), list) else [],
+        "state_effects": item.get("state_effects") if isinstance(item.get("state_effects"), list) else [],
     }
 
 
@@ -162,7 +193,7 @@ def find_inventory_item(inventory: Any, reference: Any):
     return None
 
 
-def resolve_inventory_action(user_input: str, inventory: Any):
+def resolve_inventory_action(user_input: str, inventory: Any, character: dict = None):
     """Resolve explicit inventory commands; prose remains the writer's job."""
     match = re.match(r"^(inspect|use|equip|unequip|drop)\s+(.+?)[.!]?$", str(user_input or "").strip(), re.I)
     if not match:
@@ -174,6 +205,9 @@ def resolve_inventory_action(user_input: str, inventory: Any):
         return {"status": "failed", "operation": operation, "requested_item": requested,
                 "reason": "item_not_owned", "continuation": "The character can choose another approach."}
     normalized = normalize_item(item)
+    if operation == "drop" and normalized.get("drop_policy") == "bound":
+        return {"status": "failed", "operation": operation, "item": normalized,
+                "reason": "item_is_bound", "continuation": "Its bond must be resolved before it can be left behind."}
     if operation == "equip" and normalized.get("equipped"):
         return {"status": "failed", "operation": operation, "item": normalized,
                 "reason": "already_equipped", "continuation": "The character can still use or inspect it."}
@@ -183,6 +217,13 @@ def resolve_inventory_action(user_input: str, inventory: Any):
     if operation == "use" and isinstance(normalized.get("charges"), (int, float)) and normalized["charges"] <= 0:
         return {"status": "failed", "operation": operation, "item": normalized,
                 "reason": "no_charges", "continuation": "The character can seek another resource."}
+    if operation == "use" and normalized.get("requirements"):
+        from app.story.capabilities import find_capability
+        missing = [req for req in normalized["requirements"] if not find_capability(character or {}, req)]
+        if missing:
+            return {"status": "failed", "operation": operation, "item": normalized,
+                    "reason": "capability_required", "missing_capabilities": missing,
+                    "continuation": "Learn, recall, or find another way to use it."}
     return {"status": "resolved", "operation": operation, "item": normalized, "reason": "item_available"}
 
 
@@ -206,5 +247,48 @@ def apply_inventory_resolution(inventory: list, resolution: Any) -> None:
         charges = item.get("charges")
         if isinstance(charges, (int, float)) and charges > 0:
             item["charges"] = charges - 1
-        if item.get("stackable") and "consumable" in item.get("tags", []):
+        normalized = normalize_item(item)
+        usage = normalized.get("usage", {})
+        if usage.get("mode") == "charges" and isinstance(item.get("charges"), (int, float)):
+            item.setdefault("usage", usage)
+            item["usage"]["remaining"] = max(0, int(item["charges"]))
+        if usage.get("mode") == "charges" and not isinstance(item.get("charges"), (int, float)):
+            item.setdefault("usage", usage)
+            item["usage"]["remaining"] = max(0, int(item["usage"].get("remaining", 0)) - 1)
+        elif usage.get("mode") == "quantity":
             remove_inventory_item(inventory, {"instance_id": item.get("instance_id"), "quantity": 1})
+            remaining = find_inventory_item(inventory, {"instance_id": item.get("instance_id")})
+            if isinstance(remaining, dict):
+                remaining.setdefault("usage", usage)
+                remaining["usage"]["remaining"] = max(0, int(remaining.get("quantity", 1)))
+
+
+def apply_item_state_effects(character: dict, resolution: Any, *, at_tick: int) -> list:
+    """Apply the deliberately small, genre-neutral item effect surface.
+
+    Items may add semantic status records. Arbitrary state paths and numeric
+    character rewrites are ignored, keeping an AI-authored item from becoming a
+    hidden scripting language.
+    """
+    if not isinstance(character, dict) or not isinstance(resolution, dict):
+        return []
+    if resolution.get("status") != "resolved" or resolution.get("operation") != "use":
+        return []
+    effects = resolution.get("item", {}).get("state_effects", [])
+    applied = []
+    statuses = character.setdefault("status_effects", [])
+    if not isinstance(statuses, list):
+        character["status_effects"] = statuses = []
+    for spec in effects if isinstance(effects, list) else []:
+        if not isinstance(spec, dict) or spec.get("operation", "add") != "add":
+            continue
+        if spec.get("path", "status_effects") != "status_effects":
+            continue
+        value = spec.get("value") if isinstance(spec.get("value"), dict) else None
+        if not value or not (value.get("name") or value.get("effect_id")):
+            continue
+        value = dict(value)
+        value["applied_at_tick"] = at_tick
+        statuses.append(value)
+        applied.append(value)
+    return applied

@@ -163,6 +163,15 @@ def mock_planner_response(user_input: str) -> str:
 _VALID_ROLES = frozenset({"planner", "writer", "extractor", "editor", "checker", "summarizer"})
 
 
+def _is_openclaw_target(provider: str, base_url: str) -> bool:
+    """Return whether this request targets OpenClaw's model-rewriting API.
+
+    ``custom`` means OpenAI-compatible, not OpenClaw. Treating every custom
+    endpoint as OpenClaw corrupts ordinary model ids such as ``deepseek-flash``.
+    """
+    return provider == "openclaw" or "18789" in (base_url or "")
+
+
 def call_llm(system_prompt: str, user_prompt: str, user_input_for_mock: str = "",
              mock_response: str = None, world_name: str = None,
              role: str = "default") -> str:
@@ -209,7 +218,7 @@ def call_llm(system_prompt: str, user_prompt: str, user_input_for_mock: str = ""
             if provider == "openrouter":
                 headers["HTTP-Referer"] = "https://story-engine.app"
                 headers["X-Title"] = "Story Engine"
-            if provider in ("custom", "openclaw") or "18789" in base_url:
+            if _is_openclaw_target(provider, base_url):
                 headers["x-openclaw-scopes"] = "operator.write"
                 if model == "deepseek-web" or "/" not in model:
                     model = "openclaw"

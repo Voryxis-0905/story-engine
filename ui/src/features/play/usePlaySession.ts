@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../../api/client';
-import type { InventoryItem, PlayState, TravelPreview } from '../../api/client';
+import type { InventoryItem, PlayState, TravelPreview, TimeSkipRequest, TimeSkipPreview } from '../../api/client';
 import type { DrawerTab, Turn, PlayDraft } from './types';
 import { WORLD_RESTORED_EVENT, DRAFT_STORAGE_PREFIX } from './types';
 
@@ -74,6 +74,9 @@ export function usePlaySession(worldName: string) {
   const [epilogueChoices, setEpilogueChoices] = useState<string[]>([]);
   const [travelPreview, setTravelPreview] = useState<TravelPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [timeSkipOpen, setTimeSkipOpen] = useState(false);
+  const [timeSkipPreview, setTimeSkipPreview] = useState<TimeSkipPreview | null>(null);
+  const [timeSkipLoading, setTimeSkipLoading] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -229,6 +232,9 @@ export function usePlaySession(worldName: string) {
     setEpilogueChoices([]);
     setTravelPreview(null);
     setPreviewLoading(false);
+    setTimeSkipOpen(false);
+    setTimeSkipPreview(null);
+    setTimeSkipLoading(false);
     setError(null);
     if (worldName) {
       loadPlayState();
@@ -382,6 +388,63 @@ export function usePlaySession(worldName: string) {
   const handleAbandonJourney = () => {
     setInput('Abandon journey.');
     setActiveDrawer(null);
+  };
+
+  const handlePreviewTimeSkip = async (request: TimeSkipRequest) => {
+    const token = worldTokenRef.current;
+    setTimeSkipLoading(true);
+    setTimeSkipPreview(null);
+    setError(null);
+    try {
+      const preview = await api.play.previewTimeSkip(worldName, request);
+      if (token !== worldTokenRef.current) return;
+      setTimeSkipPreview(preview);
+    } catch (e: any) {
+      if (token !== worldTokenRef.current) return;
+      setError(e.message || 'Failed to preview time skip');
+    } finally {
+      if (token === worldTokenRef.current) setTimeSkipLoading(false);
+    }
+  };
+
+  const handleExecuteTimeSkip = async (request: TimeSkipRequest) => {
+    if (sendingRef.current) return;
+    const token = worldTokenRef.current;
+    const requestId = makeRequestId();
+    sendingRef.current = true;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.play.executeTimeSkip(worldName, {
+        ...request, request_id: requestId, expected_revision: revisionRef.current,
+      });
+      if (token !== worldTokenRef.current) return;
+      if (typeof res?.revision === 'number') revisionRef.current = res.revision;
+      setDraft(null);
+      storeDraft(null);
+      setTimeSkipOpen(false);
+      setTimeSkipPreview(null);
+      await Promise.all([loadExistingChapters(), reloadCommittedData()]);
+    } catch (e: any) {
+      if (token !== worldTokenRef.current) return;
+      const detail = e?.detail;
+      if (detail?.persisted === false && detail?.draft_chapter_text) {
+        const nextDraft: PlayDraft = {
+          worldName, userInput: `Time skip: ${request.activity || 'Pass the time'}`,
+          text: detail.draft_chapter_text, status: detail.status || 'blocked',
+          reason: detail.reason || 'time_skip_blocked', message: detail.message || e.message,
+          requestId, createdAt: Date.now(),
+        };
+        setDraft(nextDraft);
+        storeDraft(nextDraft);
+      }
+      setError(e.message || 'Failed to advance time');
+    } finally {
+      if (token === worldTokenRef.current) {
+        sendingRef.current = false;
+        setLoading(false);
+      }
+    }
   };
 
   const handleRetryDraft = () => {
@@ -563,9 +626,10 @@ export function usePlaySession(worldName: string) {
   const protagonist = playState?.protagonist;
   const arc = playState?.arc_progress;
   const clock = playState?.story_clock || {};
+  const calendar = playState?.calendar || null;
 
 
-  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handlePreviewTravel, travelPreview, previewLoading, handleTravelTo, handleItemAction, handleContinueJourney, handleAbandonJourney, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock };
+  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handlePreviewTravel, travelPreview, previewLoading, handleTravelTo, handleItemAction, handleContinueJourney, handleAbandonJourney, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock, calendar };
 }
 
 export type PlaySession = ReturnType<typeof usePlaySession>;
