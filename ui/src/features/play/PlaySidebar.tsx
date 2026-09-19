@@ -1,9 +1,23 @@
 import type { PlaySession } from './usePlaySession';
 import { ChevronLeftIcon, ChevronRightIcon, ClockIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 
-type Props = Pick<PlaySession, 'sidebarOpen' | 'setSidebarOpen' | 'protagonist' | 'arc' | 'clock'>;
+type Props = Pick<PlaySession, 'sidebarOpen' | 'setSidebarOpen' | 'protagonist' | 'arc' | 'clock' | 'calendar'>;
 
-export function PlaySidebar({ sidebarOpen, setSidebarOpen, protagonist, arc, clock }: Props) {
+export function PlaySidebar({ sidebarOpen, setSidebarOpen, protagonist, arc, clock, calendar }: Props) {
+  const gregorianMonths = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+  const monthName = calendar?.kind === 'gregorian'
+    ? gregorianMonths[Number(clock.month) - 1]
+    : calendar?.months?.[Number(clock.month) - 1]?.name;
+  const time = Number.isInteger(clock.second_of_day)
+    ? `${String(Math.floor(clock.second_of_day / 3600)).padStart(2, '0')}:${String(Math.floor(clock.second_of_day % 3600 / 60)).padStart(2, '0')}`
+    : Number.isInteger(clock.minute_of_day)
+      ? `${String(Math.floor(clock.minute_of_day / 60)).padStart(2, '0')}:${String(clock.minute_of_day % 60).padStart(2, '0')}`
+      : clock.time_of_day;
+  const date = [clock.day != null ? `Day ${clock.day}` : null,
+    monthName || (clock.month != null ? `Month ${clock.month}` : null),
+    clock.year != null ? `${calendar?.year_label || 'Year'} ${clock.year}${calendar?.era ? ` ${calendar.era}` : ''}` : null]
+    .filter(Boolean).join(' · ');
   return (<>
       {/* LEFT SIDEBAR */}
       <aside
@@ -36,14 +50,14 @@ export function PlaySidebar({ sidebarOpen, setSidebarOpen, protagonist, arc, clo
                 <span>Story Timeline</span>
               </div>
               <div className="text-sm font-bold text-[var(--ink-main)]">
-                {clock.season || 'Autumn'} • {clock.time_of_day || 'Dawn'}
+                {[clock.season, time].filter(Boolean).join(' · ') || 'Time not set'}
               </div>
               <div className="text-xs text-[var(--ink-soft)] font-mono font-bold">
-                Year {clock.year || 1024}, Day {clock.day || 14}
+                {date || 'Date not set'}
               </div>
               <div className="text-xs text-[var(--periwinkle-dark)] flex items-center gap-1 font-bold">
                 <GlobeAltIcon className="w-5 h-5" />
-                <span>{protagonist?.location || 'Valdris Estate'}</span>
+                <span>{protagonist?.location || 'Location not set'}</span>
               </div>
             </div>
 

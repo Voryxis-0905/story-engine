@@ -36,6 +36,8 @@ export interface PlayState {
   };
   unlocked_cards: any[];
   story_clock: Record<string, any>;
+  calendar?: { kind: string; months?: { name: string; days: number }[]; year_label?: string; era?: string } | null;
+  prelude_confirmed?: boolean;
   foreshadowing_tracker: any[];
   style_card: any;
   output_length?: string;

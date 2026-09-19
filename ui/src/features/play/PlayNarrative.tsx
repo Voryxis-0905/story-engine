@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react';
 import type { TimeSkipRequest } from '../../api/client';
 import { ArrowPathIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, PaperAirplaneIcon, PlayIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
-type Props = Pick<PlaySession, 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'draft' | 'handleDismissDraft' | 'handleRetryDraft' | 'epilogue' | 'lifecycleStatus' | 'epilogueChoices' | 'handleLoadEndgameChoices' | 'handleChooseEnding' | 'chatEndRef' | 'handleSend' | 'timeSkipOpen' | 'setTimeSkipOpen' | 'timeSkipPreview' | 'timeSkipLoading' | 'handlePreviewTimeSkip' | 'handleExecuteTimeSkip' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
+type Props = Pick<PlaySession, 'playState' | 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'draft' | 'handleDismissDraft' | 'handleRetryDraft' | 'epilogue' | 'lifecycleStatus' | 'epilogueChoices' | 'handleLoadEndgameChoices' | 'handleChooseEnding' | 'chatEndRef' | 'handleSend' | 'timeSkipOpen' | 'setTimeSkipOpen' | 'timeSkipPreview' | 'timeSkipLoading' | 'handlePreviewTimeSkip' | 'handleExecuteTimeSkip' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
 
-export function PlayNarrative({ turns, input, setInput, loading, error, setError, outputLength, setOutputLength, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, draft, handleDismissDraft, handleRetryDraft, epilogue, lifecycleStatus, epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
+export function PlayNarrative({ playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, draft, handleDismissDraft, handleRetryDraft, epilogue, lifecycleStatus, epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
   const [skip, setSkip] = useState<TimeSkipRequest>({ amount: 1, unit: 'hours', activity: '', interruption_policy: 'important_events', narration_detail: 'standard', force: false });
   const [previewedSkip, setPreviewedSkip] = useState('');
   useEffect(() => { if (!timeSkipOpen) { setSkip(s => ({ ...s, force: false })); setPreviewedSkip(''); } }, [timeSkipOpen]);
@@ -119,19 +119,19 @@ export function PlayNarrative({ turns, input, setInput, loading, error, setError
               ) : null}
 
               <div className="flex items-center justify-center gap-4 pt-4 border-t border-[var(--line)]">
-                <button
+                {!playState?.prelude_confirmed && <button
                   onClick={handleGeneratePrelude}
                   disabled={loading}
                   className="pill-btn pill-btn-secondary px-6 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
                 >
                   Generate Prelude
-                </button>
+                </button>}
                 <button
-                  onClick={handleConfirmPrelude}
+                  onClick={playState?.prelude_confirmed ? handleStartChapter : handleConfirmPrelude}
                   disabled={loading}
                   className="pill-btn pill-btn-primary px-6 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
                 >
-                  Confirm Prelude & Play
+                  {playState?.prelude_confirmed ? 'Begin Story' : 'Confirm Prelude & Play'}
                 </button>
               </div>
             </div>

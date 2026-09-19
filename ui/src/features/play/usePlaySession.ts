@@ -626,9 +626,10 @@ export function usePlaySession(worldName: string) {
   const protagonist = playState?.protagonist;
   const arc = playState?.arc_progress;
   const clock = playState?.story_clock || {};
+  const calendar = playState?.calendar || null;
 
 
-  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handlePreviewTravel, travelPreview, previewLoading, handleTravelTo, handleItemAction, handleContinueJourney, handleAbandonJourney, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock };
+  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handlePreviewTravel, travelPreview, previewLoading, handleTravelTo, handleItemAction, handleContinueJourney, handleAbandonJourney, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock, calendar };
 }
 
 export type PlaySession = ReturnType<typeof usePlaySession>;

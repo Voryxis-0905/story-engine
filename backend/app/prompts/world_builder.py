@@ -42,6 +42,13 @@ MANDATORY RULES:
    - "pov_angle": one of "1st_person" (protagonist's "I" narration), "3rd_person_limited" (stays close to protagonist), or "3rd_person_omniscient" (full access to all characters' thoughts).
    - "prelude_enabled": boolean — true if the user wants a scene-setting prelude chapter before chapter 1, false otherwise.
     If the interview answers are ambiguous about any of these fields, choose the most reasonable default based on the story concept.
+   - "calendar": define the world's calendar once. For a contemporary Earth setting use
+     {"kind":"gregorian","year_label":"Year","era":"","seasons":[{"name":"Winter","months":[12,1,2]}, ...]}.
+     For an invented world use {"kind":"custom","months":[{"name":"First Tide","days":30}, ...],
+     "seasons":[{"name":"Ebb","months":[1,2]}],"year_label":"Year of the Crown","era":""}.
+     Invent only as much calendar detail as the setting needs; do not borrow Earth's seasons for an unrelated world.
+   - "story_clock": choose the opening year, month, day, and minute_of_day (0-1439) that fit
+     the concept. This is the initial date, not an elapsed time or a required future plot date.
 9. REQUIRED CONDITIONS FOR CHECKPOINTS:
    - Every checkpoint AFTER cp_0 should generally have at least one entry in "required_conditions" — major turning points and climax checkpoints MUST have meaningful conditions tied to character development (a stat threshold, a knowledge flag, or a status effect) rather than defaulting to [].
    - Only leave required_conditions empty ([]) for cp_0 itself or for checkpoints that are truly time-based / unconditional transitions that should always fire.
@@ -72,6 +79,8 @@ EXACT JSON STRUCTURE TO RETURN:
     "pacing_level": "Slowburn | Balanced | Fast",
     "pov_angle": "1st_person | 3rd_person_limited | 3rd_person_omniscient",
     "prelude_enabled": true,
+    "calendar": {"kind":"custom","months":[{"name":"First Tide","days":30}],"seasons":[{"name":"Ebb","months":[1]}],"year_label":"Year","era":""},
+    "story_clock": {"year":1,"month":1,"day":1,"minute_of_day":540,"tick":0},
     "fixed_rules": [],
     "current_checkpoint_id": "cp_0",
     "trait_definitions": {},

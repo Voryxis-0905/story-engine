@@ -165,7 +165,8 @@ def chapter_start(world_name: str, req: ChapterStartRequest):
                    f"chay lai seed-demo hoac set thu cong)."
         )
     synthetic_instruction = build_opening_instruction(checkpoint)
-    return _generate_chapter(world_name, narrator_input=synthetic_instruction, display_input="")
+    return _generate_chapter(world_name, narrator_input=synthetic_instruction,
+                             display_input="", opening_setup=True)
 
 
 @router.post("/worlds/{world_name}/chapter/generate-prelude")
@@ -373,6 +374,8 @@ def get_play_state(world_name: str):
         "arc_roadmap": world_config.get("arc_roadmap", {}),
         "unlocked_cards": unlocked_cards,
         "story_clock": story_clock,
+        "calendar": world_config.get("calendar"),
+        "prelude_confirmed": bool(world_config.get("prelude_confirmed")),
         "foreshadowing_tracker": foreshadowing_tracker,
         "foreshadowings": foreshadowing_tracker,
         "output_length": world_config.get("output_length", "Standard"),

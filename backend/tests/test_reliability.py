@@ -16,6 +16,7 @@ from app.routes import world_routes
 from app.world import schema
 from app.checkpoint_engine import check_map_based_restrictions
 from app.world.map_rules import reconcile_checkpoint_location_gates
+from app.world.calendar_clock import advance_story_clock, normalize_start_clock, normalize_elapsed_time
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -175,6 +176,67 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(location_map['locations'][1]['unlock_exp'], 0)
         self.assertIsNone(location_map['locations'][1]['unlock_checkpoint_id'])
         self.assertEqual(location_map['locations'][2]['unlock_exp'], 80)
+
+    def test_world_calendar_rolls_month_year_and_season(self):
+        calendar = {'kind': 'custom', 'months': [
+            {'name': 'Ebb', 'days': 2}, {'name': 'Flood', 'days': 3}],
+            'seasons': [{'name': 'Quiet Sea', 'months': [1]},
+                        {'name': 'Black Tide', 'months': [2]}]}
+        clock = normalize_start_clock({'year': 7, 'month': 1, 'day': 2,
+                                       'minute_of_day': 1439}, calendar)
+        advance_story_clock(clock, normalize_elapsed_time({'seconds': 90}), calendar)
+        self.assertEqual((clock['year'], clock['month'], clock['day']), (7, 2, 1))
+        self.assertEqual((clock['minute_of_day'], clock['second_of_day']), (0, 30))
+        self.assertEqual(clock['season'], 'Black Tide')
+        advance_story_clock(clock, normalize_elapsed_time({'days': 3}), calendar)
+        self.assertEqual((clock['year'], clock['month'], clock['day']), (8, 1, 1))
+
+    def test_gregorian_calendar_respects_leap_day(self):
+        calendar = {'kind': 'gregorian'}
+        clock = normalize_start_clock({'year': 2024, 'month': 2, 'day': 28,
+                                       'minute_of_day': 600}, calendar)
+        advance_story_clock(clock, normalize_elapsed_time({'days': 1}), calendar)
+        self.assertEqual((clock['year'], clock['month'], clock['day']), (2024, 2, 29))
+
+    def test_duration_mode_ignores_legacy_day_delta_from_model(self):
+        cfg = self.read('world_config.json')
+        cfg['timekeeping_mode'] = 'duration'
+        cfg['calendar'] = {'kind': 'gregorian'}
+        cfg['story_clock'] = normalize_start_clock(
+            {'year': 2026, 'month': 9, 'day': 19, 'minute_of_day': 1260}, cfg['calendar'])
+        self.write('world_config.json', cfg)
+        def timed_llm(system_prompt, user_prompt, user_input_for_mock='', mock_response=None,
+                      world_name=None, role=None):
+            if system_prompt == main.PLANNER_SYSTEM_PROMPT:
+                planned = json.loads(main.mock_planner_response(user_input_for_mock))
+                planned.setdefault('state_changes', {})['elapsed_time'] = {
+                    'days': 0, 'hours': 0, 'minutes': 8, 'seconds': 0}
+                planned['state_changes']['story_clock_delta'] = {'day': 1}
+                return json.dumps(planned)
+            if system_prompt == main.WRITER_SYSTEM_PROMPT:
+                written = json.loads(main.mock_narrator_response(user_input_for_mock))
+                written.setdefault('state_changes', {})['elapsed_time'] = {
+                    'days': 0, 'hours': 0, 'minutes': 8, 'seconds': 0}
+                written['state_changes']['story_clock_delta'] = {'day': 1}
+                return json.dumps(written)
+            return self.fake_llm(system_prompt, user_prompt, user_input_for_mock,
+                                 mock_response, world_name, role)
+        with patch.object(main, 'call_llm', side_effect=timed_llm):
+            response = self.post('chapter/continue', {'user_input': 'Speak briefly.'})
+        self.assertEqual(response.status_code, 200, response.text)
+        clock = self.read('world_config.json')['story_clock']
+        self.assertEqual((clock['day'], clock['minute_of_day']), (19, 1268))
+        self.assertEqual(clock['tick'], 1)
+
+    def test_opening_scene_does_not_tick_or_resolve_pending_event(self):
+        cfg = self.read('world_config.json')
+        cfg['timekeeping_mode'] = 'duration'
+        self.write('world_config.json', cfg)
+        self.setup_event()
+        response = self.post('chapter/start')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.read('world_config.json')['story_clock']['tick'], 0)
+        self.assertEqual(self.read('world_events.json')['events'][0]['status'], 'pending')
 
     def test_structured_inventory_is_exposed_and_legacy_items_still_work(self):
         characters = self.read('character_state.json')

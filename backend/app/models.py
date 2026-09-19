@@ -177,6 +177,7 @@ class StateChangesModel(BaseModel):
     characters: Dict[str, CharacterStateChange] = {}
     notes: str = ""
     story_clock_delta: Optional[Dict[str, Any]] = None
+    elapsed_time: Optional[Dict[str, Any]] = None
     foreshadowing_tracker_add: Optional[List[Any]] = None
     perception_data: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None

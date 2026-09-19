@@ -77,7 +77,8 @@ logger = logging.getLogger(__name__)
 @locked_world
 def _generate_chapter(world_name: str, narrator_input: str, display_input: str = None,
                       request_id: str = None, expected_revision: int = None,
-                      regenerate: bool = False, time_skip_request: dict = None) -> dict:
+                      regenerate: bool = False, time_skip_request: dict = None,
+                      opening_setup: bool = False) -> dict:
     from app.storage import (
         world_path_of, read_world_file, write_world_file,
         has_real_api_key, get_world_style_card,
@@ -339,6 +340,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         action_resolution, protagonist_id,
         character_state.get("characters", {}), world_events_for_turn,
     )
+    if opening_setup:
+        action_effect_plan = {"effects": [], "rejected": []}
     projected_action_effects = project_action_effects(action_effect_plan)
     action_resolution["engine_effects"] = projected_action_effects["effects"]
     action_resolution["rejected_effects"] = projected_action_effects["rejected"]
@@ -416,7 +419,10 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             "prelude_enabled": world_config.get("prelude_enabled", False),
             "interaction_mode": world_config.get("interaction_mode", "narrative"),
             "keyword_auto_retry": world_config.get("keyword_auto_retry", False),
-            "story_clock": story_clock
+            "story_clock": story_clock,
+            "calendar": world_config.get("calendar"),
+            "checkpoint_boundary_mode": world_config.get("checkpoint_boundary_mode", "strict"),
+            "timekeeping_mode": world_config.get("timekeeping_mode", "legacy"),
         },
         "words_per_turn_target": get_words_per_turn_target(
             world_config.get("pacing_level", "Balanced"),
@@ -424,6 +430,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         ),
         "style_card": style_card,
         "story_clock": story_clock,
+        "opening_setup": opening_setup,
         "current_checkpoint": {
             "checkpoint_id": checkpoint["checkpoint_id"],
             "description": checkpoint["description"],
@@ -660,6 +667,21 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         protagonist_changes.pop("inventory_add", None)
         protagonist_changes.pop("inventory_remove", None)
 
+    elapsed_time_resolution = None
+    if world_config.get("timekeeping_mode") == "duration":
+        from app.world.calendar_clock import normalize_elapsed_time
+        proposal = state_changes.pop("elapsed_time", None)
+        state_changes.pop("story_clock_delta", None)
+        if not travel_resolution and not time_skip_resolution:
+            elapsed_time_resolution = normalize_elapsed_time(
+                proposal, fallback_minutes=0 if opening_setup else 5,
+                max_minutes=0 if opening_setup else 360,
+            )
+    if opening_setup:
+        # The opening presents a decision. It must not silently apply the
+        # planner's irreversible outcome before the first player action.
+        state_changes = {"characters": {}, "notes": "Opening scene; awaiting player action."}
+
     character_state["characters"] = apply_state_changes(
         character_state["characters"], state_changes,
         trait_definitions=world_config.get("trait_definitions"),
@@ -668,7 +690,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         foreshadowing_tracker=foreshadowing_tracker,
         current_chapter_index=this_chapter_index
     )
-    if inventory_resolution:
+    if inventory_resolution and not opening_setup:
         from app.story.inventory import apply_inventory_resolution, apply_item_state_effects
         protagonist_after = character_state["characters"].get(protagonist_id, {})
         apply_inventory_resolution(
@@ -690,10 +712,15 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     world_config["story_clock"] = story_clock
     if travel_resolution and travel_resolution.get("status") in ("arrived", "interrupted"):
         from app.world.travel import advance_clock_minutes
-        advance_clock_minutes(story_clock, int(travel_resolution.get("elapsed_minutes", 0) or 0))
+        advance_clock_minutes(story_clock, int(travel_resolution.get("elapsed_minutes", 0) or 0),
+                              world_config.get("calendar"))
     if time_skip_resolution:
         from app.world.travel import advance_clock_minutes
-        advance_clock_minutes(story_clock, int(time_skip_resolution.get("granted_minutes", 0) or 0))
+        advance_clock_minutes(story_clock, int(time_skip_resolution.get("granted_minutes", 0) or 0),
+                              world_config.get("calendar"))
+    if elapsed_time_resolution and not opening_setup:
+        from app.world.calendar_clock import advance_story_clock
+        advance_story_clock(story_clock, elapsed_time_resolution, world_config.get("calendar"))
     if travel_resolution and travel_resolution.get("status") == "interrupted":
         world_config["active_journey"] = {
             "journey_id": travel_resolution.get("journey_id") or f"journey_{uuid.uuid4().hex[:12]}",
@@ -801,6 +828,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "inventory_resolution": inventory_resolution,
         "travel_resolution": travel_resolution,
         "time_skip_resolution": time_skip_resolution,
+        "elapsed_time_resolution": elapsed_time_resolution,
         "consistency_check": {
             "status": checker_result["status"],
             "severity": checker_result["severity"],
@@ -829,6 +857,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         chapter_record["mood"] = summary_res.get("mood", "")
 
     for char_id, state in character_state.get("characters", {}).items():
+        if opening_setup:
+            continue
         if isinstance(state, dict) and "status_effects" in state and isinstance(state["status_effects"], list):
             active_effects = []
             for effect in state["status_effects"]:
@@ -849,18 +879,18 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
 
     checkpoint_advanced = advance_checkpoint_if_ready(
         canon_timeline, world_config, character_state["characters"], card_registry,
-        chapter_closed=this_chapter_closed
+        chapter_closed=this_chapter_closed and not opening_setup
     )
 
     # Resolve against the final turn clock, then commit consequences with the turn.
     # The engine owns logical turns; model-generated calendar time is independent.
-    story_clock["tick"] = turn_start_tick + int(
+    story_clock["tick"] = turn_start_tick + (0 if opening_setup else int(
         (time_skip_resolution.get("granted_ticks", 1) if time_skip_resolution else
          travel_resolution.get("tick_advance", 1) if travel_resolution else 1)
-    )
+    ))
     from app.world_events import tick_world_events
     world_events = world_events_for_turn
-    resolved = tick_world_events(
+    resolved = [] if opening_setup else tick_world_events(
         world_events, world_config, character_state["characters"],
         world_canon_store, location_map
     )
