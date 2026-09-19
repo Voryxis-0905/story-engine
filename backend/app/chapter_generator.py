@@ -167,6 +167,23 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
                    f"chạy lại seed-demo hoặc set thủ công)."
         )
 
+    boundary_advisory = world_config.get("checkpoint_boundary_mode") == "advisory"
+    if boundary_advisory:
+        # Checkpoints schedule events; they do not fence the player into a
+        # scene. Keep all known places/people available to the narrator while
+        # physical travel and explicit map gates are still checked separately.
+        known_places = [loc.get("name") for loc in (location_map or {}).get("locations", [])
+                        if isinstance(loc, dict) and loc.get("name")]
+        known_places.extend(
+            char.get("location") for char in character_state.get("characters", {}).values()
+            if isinstance(char, dict) and char.get("location")
+        )
+        checkpoint = {**checkpoint, "boundary": {
+            **(checkpoint.get("boundary") or {}),
+            "locations": list(dict.fromkeys(known_places)),
+            "allowed_characters": list(character_state.get("characters", {})),
+        }}
+
     boundary = checkpoint.get("boundary") or {}
     boundary_locations = boundary.get("locations") or []
     boundary_chars = boundary.get("allowed_characters") or []
@@ -360,7 +377,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             "location": travel_resolution.get("destination", "")
         }}}
         travel_violations = (
-            check_boundary_violations(attempted, checkpoint)
+            ([] if boundary_advisory else check_boundary_violations(attempted, checkpoint))
             + check_map_based_restrictions(
                 attempted, location_map, character_state.get("characters", {}), world_config
             )
@@ -452,7 +469,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     )
 
     boundary_correction = None
-    violations = check_boundary_violations(state_changes, checkpoint)
+    violations = [] if boundary_advisory else check_boundary_violations(state_changes, checkpoint)
     map_violations = check_map_based_restrictions(
         state_changes, location_map,
         character_state.get("characters", {}), world_config
@@ -474,7 +491,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             world_name=world_name, editor_enabled=_editor_enabled
         )
 
-        violations_after_retry = check_boundary_violations(state_changes, checkpoint)
+        violations_after_retry = [] if boundary_advisory else check_boundary_violations(state_changes, checkpoint)
         map_violations_after_retry = check_map_based_restrictions(
             state_changes, location_map,
             character_state.get("characters", {}), world_config
@@ -517,7 +534,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         )
         consistency_rewritten = True
 
-        violations_after_cc = check_boundary_violations(state_changes, checkpoint)
+        violations_after_cc = [] if boundary_advisory else check_boundary_violations(state_changes, checkpoint)
         map_violations_after_cc = check_map_based_restrictions(
             state_changes, location_map,
             character_state.get("characters", {}), world_config

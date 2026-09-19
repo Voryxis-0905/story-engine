@@ -15,6 +15,7 @@ from app import storage, persistence, engine, chapter_generator
 from app.routes import world_routes
 from app.world import schema
 from app.checkpoint_engine import check_map_based_restrictions
+from app.world.map_rules import reconcile_checkpoint_location_gates
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -158,6 +159,22 @@ class ReliabilityTests(unittest.TestCase):
                                                           location_map, characters['characters'], self.cfg)
                 self.assertEqual(status['is_unlocked'], not violations)
                 self.assertEqual(status['is_unlocked'], unlocked)
+
+    def test_generated_event_venue_cannot_require_experience_to_enter(self):
+        timeline = [{'checkpoint_id': 'cp_0', 'boundary': {'locations': ['Road']}},
+                    {'checkpoint_id': 'cp_1', 'boundary': {'locations': ['Square']}}]
+        location_map = {'locations': [
+            {'name': 'Road', 'unlock_exp': 30, 'unlock_checkpoint_id': 'cp_2'},
+            {'name': 'Square', 'unlock_exp': 50, 'unlock_checkpoint_id': 'cp_1'},
+            {'name': 'Secret Vault', 'unlock_exp': 80},
+        ]}
+        reconcile_checkpoint_location_gates(location_map, timeline,
+                                            {'hero': {'location': 'Road'}})
+        self.assertEqual(location_map['locations'][0]['unlock_exp'], 0)
+        self.assertIsNone(location_map['locations'][0]['unlock_checkpoint_id'])
+        self.assertEqual(location_map['locations'][1]['unlock_exp'], 0)
+        self.assertIsNone(location_map['locations'][1]['unlock_checkpoint_id'])
+        self.assertEqual(location_map['locations'][2]['unlock_exp'], 80)
 
     def test_structured_inventory_is_exposed_and_legacy_items_still_work(self):
         characters = self.read('character_state.json')

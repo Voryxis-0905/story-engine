@@ -518,6 +518,7 @@ def world_builder_step(world_name: str):
                     json.dumps([r for r in sanitize_result if r.get("removed")], ensure_ascii=False)
                 )
 
+            cfg["checkpoint_boundary_mode"] = "advisory"
             cfg["creation_status"] = "complete"
             write_world_file(world_path, "world_config.json", cfg)
             bump_world_revision(world_path)
