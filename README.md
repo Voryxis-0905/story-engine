@@ -28,6 +28,8 @@ On other operating systems, activate the Python environment and run `npm run dev
 
 Configure a provider and model in Settings when you want live AI generation. Runtime configuration, API keys, personal worlds, and saves stay outside Git. The repository contains no personal play data; the application creates its data directory at startup.
 
+For a repeatable local setup, copy `.env.example` to `.env` and set only the values you need. The application loads `.env` at startup; the file is ignored by Git. Settings can override the default provider configuration for a world.
+
 ## Validation
 
 ```powershell
@@ -45,7 +47,7 @@ Set `STORY_ENGINE_DATA_DIR` to choose a separate local data directory. Without i
 
 - `backend/` — API, engine, rules, memory, and AI pipeline.
 - `ui/` — web interface.
-- `docs/` — design documentation, decisions, reviews, and implementation history.
+- `docs/` — current design documentation and implementation references.
 - `data/` — created locally and excluded from Git.
 
-Read the [documentation index](docs/README.md) and [contribution guide](CONTRIBUTING.md) before changing the project. Historical documents can describe planned or superseded behavior; prioritize current design principles and evidence-backed test reports.
+Read the [documentation index](docs/README.md) and [contribution guide](CONTRIBUTING.md) before changing the project.
