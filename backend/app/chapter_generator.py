@@ -527,6 +527,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             "inventory_resolution": inventory_resolution,
             "travel_resolution": travel_resolution,
             "time_skip_resolution": time_skip_resolution,
+            "opening_setup": opening_setup,
         },
     )
     consistency_rewritten = False
@@ -565,6 +566,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
                 "inventory_resolution": inventory_resolution,
                 "travel_resolution": travel_resolution,
                 "time_skip_resolution": time_skip_resolution,
+                "opening_setup": opening_setup,
             },
         )
 

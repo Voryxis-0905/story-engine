@@ -794,6 +794,48 @@ class ReliabilityTests(unittest.TestCase):
         bad_major = parse_checker_response('{"consistent":false,"severity":"major","issues":["x"],"explanation":""}')
         self.assertEqual(bad_major['status'], 'failed')
 
+    def test_checker_receives_clock_window_and_proposed_location(self):
+        from app.story.consistency import build_consistency_checker_payload
+        config = {
+            'timekeeping_mode': 'duration', 'calendar': {'kind': 'gregorian'},
+            'protagonist_id': 'hero',
+            'story_clock': normalize_start_clock(
+                {'year': 2024, 'month': 9, 'day': 15, 'minute_of_day': 1045},
+                {'kind': 'gregorian'}),
+        }
+        payload = build_consistency_checker_payload(
+            'They only step outside the bookshop.',
+            {'characters': {'hero': {'location': 'Station South Exit'}},
+             'elapsed_time': {'minutes': 4}},
+            config, {}, [], {'hero': {'location': 'Bookshop'}},
+        )
+        alignment = payload['temporal_spatial_alignment']
+        self.assertEqual(alignment['clock_at_turn_start']['minute_of_day'], 1045)
+        self.assertEqual(alignment['clock_after_proposed_turn']['minute_of_day'], 1049)
+        self.assertEqual(alignment['protagonist_location_before'], 'Bookshop')
+        self.assertEqual(alignment['protagonist_location_after_proposed_turn'], 'Station South Exit')
+
+    def test_state_sync_failure_blocks_commit_even_when_lore_passes(self):
+        from app.story.consistency import parse_checker_response
+        result = parse_checker_response(json.dumps({
+            'consistent': True, 'severity': 'minor', 'state_sync': False,
+            'issues': ['State says station; prose ends outside bookshop.'],
+            'explanation': 'The proposed location is ahead of the scene.',
+        }))
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['severity'], 'major')
+
+    def test_player_stop_point_is_blocking_even_when_state_matches_prose(self):
+        from app.story.consistency import parse_checker_response
+        result = parse_checker_response(json.dumps({
+            'consistent': True, 'severity': 'minor', 'state_sync': True,
+            'action_scope': False,
+            'issues': ['The player stopped at the entrance; prose walked onto the veranda.'],
+            'explanation': 'The scene passed the requested stopping point.',
+        }))
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['severity'], 'major')
+
     def test_successful_rewrite_is_rechecked_and_passes(self):
         calls = {'n': 0}
 
