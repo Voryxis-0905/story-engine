@@ -10,7 +10,7 @@ Inventory uses a stable, genre-neutral schema with flexible descriptions and eff
 
 This is an actively developed MVP. Generated worlds use advisory checkpoints: a checkpoint represents an event that can unfold in different ways, rather than a location or outcome that traps the player. The engine protects continuity by checking narrative time, location, declared consequences, and explicit player stopping points before committing a turn.
 
-See the [design principles](docs/DESIGN-PRINCIPLES.md), [codebase map](docs/CODEBASE.md), and [review and brainstorming notes](docs/REVIEW-VA-BRAINSTORM.md) for the current direction and known limitations.
+See the [design principles](docs/DESIGN-PRINCIPLES.md), [codebase map](docs/CODEBASE.md), and [action effects reference](docs/Architecture/ACTION_EFFECTS.md) for the current direction and implementation detail.
 
 ## Requirements
 

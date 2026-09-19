@@ -6,12 +6,10 @@ Read these documents in order:
 2. [Design principles](DESIGN-PRINCIPLES.md) — player and creator authority, world knowledge, events, and checkpoints.
 3. [Codebase map](CODEBASE.md) — module responsibilities and where to begin making a change.
 4. [Contribution guide](../CONTRIBUTING.md) — change workflow and required checks.
-5. [Agent backlog](AGENT-BACKLOG.md) — planned tasks, dependencies, acceptance criteria, and example prompts. It was created at commit `fc55b72`; review it against the current code before implementing an item.
+5. [Action effects reference](Architecture/ACTION_EFFECTS.md) — the whitelist bridge that turns declared action outcomes into committed world state.
 
-## Design and history
+## Documentation policy
 
-- [Initial review](REVIEW-VA-BRAINSTORM.md) records issues and possible directions. It is not a list of completed features.
-- [Architecture](Architecture/) contains design material written before the codebase refactor. Some paths and proposals may no longer match the implementation.
-- [Tasks and reports](Tasks_and_Reports/) contains implementation history, validation notes, and decisions. It is retained for traceability and should not be treated as the current specification.
+This directory contains only current specifications and implementation references. Superseded plans, agent-session notes, generated task reports, and duplicated research documents were removed from the working tree; their history remains available through Git.
 
 When behavior changes, update the relevant design documentation in the same pull request. When code moves, update the codebase map.
