@@ -22,9 +22,11 @@ export interface PlayState {
     power_stat: Record<string, any>;
     traits: Record<string, any>;
     knowledge_flags: string[];
+    inventory: InventoryItem[];
     alive: boolean;
     relationships: Record<string, any>;
     age: string;
+    capabilities?: CapabilityEvidence[];
   } | null;
   arc_progress: {
     current_checkpoint_id: string;
@@ -34,6 +36,8 @@ export interface PlayState {
   };
   unlocked_cards: any[];
   story_clock: Record<string, any>;
+  calendar?: { kind: string; months?: { name: string; days: number }[]; year_label?: string; era?: string } | null;
+  prelude_confirmed?: boolean;
   foreshadowing_tracker: any[];
   style_card: any;
   output_length?: string;
@@ -41,6 +45,92 @@ export interface PlayState {
   lifecycle_status?: string;
   story_mode?: string;
   epilogue?: { text: string; chosen_choice?: string } | null;
+  active_journey?: ActiveJourney | null;
+}
+
+export interface ActiveJourney {
+  journey_id: string;
+  origin?: string;
+  destination: string;
+  remaining_route?: string[];
+  elapsed_minutes?: number;
+  status: 'active' | 'interrupted' | 'completed' | 'abandoned';
+  reason?: string;
+}
+
+export interface TravelPreview {
+  status: 'available' | 'blocked' | 'unreachable' | 'already_there' | 'unknown_destination';
+  origin?: string;
+  destination?: string;
+  route: string[];
+  legs: Array<{ from: string; to: string; travel_time_minutes: number; danger: number; tags: string[] }>;
+  elapsed_minutes: number;
+  estimated_ticks: number;
+  narration_mode?: string;
+  risk?: { level: string; known_tags: string[] };
+  requirements_missing?: Array<Record<string, unknown>>;
+  reason?: string;
+}
+
+export interface InventoryItem {
+  instance_id: string;
+  item_id?: string | null;
+  name: string;
+  category: string;
+  description: string;
+  attributes: Record<string, any>;
+  abilities: Array<Record<string, any> | string>;
+  tags: string[];
+  quantity: number;
+  stackable?: boolean;
+  custom_name?: string | null;
+  condition: string;
+  equipped: boolean;
+  charges?: number | null;
+  acquired_at_tick?: number | null;
+  acquired_from?: string | null;
+  item_kind?: 'consumable' | 'persistent' | 'causal_artifact' | string;
+  destructibility?: 'normal' | 'protected' | 'indestructible' | string;
+  drop_policy?: 'allowed' | 'bound' | string;
+  usage?: { mode: 'unlimited' | 'charges' | 'quantity' | 'narrative' | string; remaining?: number };
+  requirements?: Array<string | Record<string, any>>;
+  state_effects?: Array<Record<string, any>>;
+}
+
+export interface CapabilityEvidence {
+  capability_id: string;
+  statement: string;
+  proficiency?: string;
+  sources?: string[];
+  limits?: string[];
+  tags?: string[];
+}
+
+export interface TimeSkipRequest {
+  amount: number;
+  unit: 'minutes' | 'hours' | 'days' | 'weeks';
+  activity: string;
+  interruption_policy: 'important_events' | 'known_quest_deadlines' | 'immediate_danger' | 'complete' | 'ask';
+  narration_detail?: 'brief' | 'standard' | 'detailed';
+  force?: boolean;
+  request_id?: string;
+  expected_revision?: number;
+}
+
+export interface TimeSkipPreview {
+  requested_minutes: number;
+  granted_minutes: number;
+  requested_ticks: number;
+  granted_ticks: number;
+  start_tick: number;
+  end_tick: number;
+  warnings: Array<{ kind: string; event_id: string; title: string; deadline_tick: number; ticks_away: number }>;
+  will_interrupt: boolean;
+  stopped_reason?: string | null;
+  requires_confirmation: boolean;
+  activity: string;
+  forced: boolean;
+  blocked?: boolean;
 }
 
 export interface ChapterContinueResponse {
@@ -169,6 +259,14 @@ export const api = {
           request_id: opts?.requestId,
           expected_revision: opts?.expectedRevision,
         }),
+      }),
+    previewTimeSkip: (worldName: string, req: TimeSkipRequest) =>
+      fetchJSON<TimeSkipPreview>(`/worlds/${worldName}/time-skip/preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
+      }),
+    executeTimeSkip: (worldName: string, req: TimeSkipRequest) =>
+      fetchJSON<ChapterContinueResponse>(`/worlds/${worldName}/time-skip/execute`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
       }),
     regenerate: (worldName: string, opts?: { requestId?: string; expectedRevision?: number }) =>
       fetchJSON<any>(`/worlds/${worldName}/chapter/regenerate`, {
@@ -331,5 +429,11 @@ export const api = {
       fetchJSON<{ locations: any[] }>(`/worlds/${worldName}/location-map`),
     status: (worldName: string) =>
       fetchJSON<{ locations: any[] }>(`/worlds/${worldName}/location-map/status`),
+    previewTravel: (worldName: string, destination: string) =>
+      fetchJSON<TravelPreview>(`/worlds/${worldName}/travel/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destination }),
+      }),
   },
 };

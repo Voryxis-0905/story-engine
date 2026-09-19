@@ -74,6 +74,13 @@ def raise_boundary_hard_reject(
         lang = detect_story_language(user_input=user_input, recent_text=recent_text, world_config=world_config)
 
     tmpl = BOUNDARY_HARD_REJECT_TEMPLATES.get(lang, BOUNDARY_HARD_REJECT_TEMPLATES["en"])
+    if violations and all(isinstance(v, dict) and v.get("reason") for v in violations):
+        details = "; ".join(
+            f"{v.get('attempted_location', '?')}: {v['reason']} "
+            f"requires {v.get('required', '?')} (current {v.get('current', '?')})"
+            for v in violations
+        )
+        raise HTTPException(status_code=409, detail=f"Map access blocked: {details}")
     allowed = checkpoint.get("boundary", {}).get("locations", []) if isinstance(checkpoint, dict) and "boundary" in checkpoint else []
     lines = [
         tmpl["line"].format(

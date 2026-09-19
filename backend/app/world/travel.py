@@ -1,0 +1,206 @@
+"""Deterministic travel planning; the narrator describes, the engine decides."""
+from collections import deque
+import hashlib
+import math
+import re
+
+
+def _locations(location_map: dict) -> list:
+    return [item for item in (location_map or {}).get("locations", []) if isinstance(item, dict)]
+
+
+def _matches(location: dict, ref: str) -> bool:
+    target = str(ref or "").strip().lower()
+    return target in {str(location.get("id", "")).lower(), str(location.get("name", "")).lower()}
+
+
+def find_location(location_map: dict, ref: str):
+    return next((item for item in _locations(location_map) if _matches(item, ref)), None)
+
+
+def extract_travel_destination(user_input: str, location_map: dict):
+    text = str(user_input or "").strip()
+    match = re.match(r"^(?:travel\s+to|go\s+to|đi\s+(?:đến|tới))\s+(.+?)(?:[.!]|\s+(?:via|by|bằng|theo)\s+.*)?$", text, re.I)
+    if not match:
+        return None
+    requested = match.group(1).strip().strip("\"'")
+    exact = find_location(location_map, requested)
+    if exact:
+        return exact
+    lowered = requested.lower()
+    return next((item for item in _locations(location_map)
+                 if str(item.get("name", "")).lower() in lowered), None)
+
+
+def _neighbors(location: dict) -> list:
+    result = []
+    for edge in location.get("connected_to", []) or []:
+        if isinstance(edge, str):
+            result.append((edge, {}))
+        elif isinstance(edge, dict):
+            ref = edge.get("location_id") or edge.get("to") or edge.get("id")
+            if ref:
+                result.append((str(ref), edge))
+    return result
+
+
+def find_route(location_map: dict, start_ref: str, destination_ref: str):
+    start = find_location(location_map, start_ref)
+    destination = find_location(location_map, destination_ref)
+    if not start or not destination:
+        return None
+    if start.get("id") == destination.get("id"):
+        return [start]
+    queue = deque([(start, [start])])
+    visited = {start.get("id")}
+    while queue:
+        current, path = queue.popleft()
+        for ref, _edge in _neighbors(current):
+            nxt = find_location(location_map, ref)
+            if not nxt or nxt.get("id") in visited:
+                continue
+            next_path = path + [nxt]
+            if nxt.get("id") == destination.get("id"):
+                return next_path
+            visited.add(nxt.get("id"))
+            queue.append((nxt, next_path))
+    return None
+
+
+def _edge_minutes(a: dict, b: dict) -> int:
+    for ref, edge in _neighbors(a):
+        if _matches(b, ref) and edge.get("travel_time_minutes") is not None:
+            return max(1, int(edge["travel_time_minutes"]))
+    dx = float(a.get("x", 0) or 0) - float(b.get("x", 0) or 0)
+    dy = float(a.get("y", 0) or 0) - float(b.get("y", 0) or 0)
+    return max(10, int(round(math.hypot(dx, dy) * 3)))
+
+
+def _edge_metadata(a: dict, b: dict) -> dict:
+    for ref, edge in _neighbors(a):
+        if _matches(b, ref):
+            return edge
+    return {}
+
+
+def preview_travel(location_map: dict, current_location: str, destination_ref: str,
+                   *, tick_minutes: int = 60) -> dict:
+    destination = find_location(location_map, destination_ref)
+    start = find_location(location_map, current_location)
+    if not destination:
+        return {"status": "unknown_destination", "destination": destination_ref,
+                "elapsed_minutes": 0, "estimated_ticks": 0, "route": [], "legs": []}
+    if not start:
+        return {"status": "blocked", "reason": "current_location_not_on_map",
+                "destination": destination.get("name"), "elapsed_minutes": 0,
+                "estimated_ticks": 0, "route": [], "legs": []}
+    route = find_route(location_map, start.get("id"), destination.get("id"))
+    if not route:
+        return {"status": "unreachable", "reason": "no_connected_route",
+                "origin": start.get("name"), "destination": destination.get("name"),
+                "elapsed_minutes": 0, "estimated_ticks": 0, "route": [], "legs": []}
+    if len(route) == 1:
+        return {"status": "already_there", "origin": start.get("name"),
+                "destination": destination.get("name"), "destination_id": destination.get("id"),
+                "elapsed_minutes": 0, "estimated_ticks": 0,
+                "route": [start.get("name")], "legs": [], "risk": {"level": "none", "known_tags": []}}
+    legs = []
+    minutes = 0
+    known_tags = []
+    max_danger = 0.0
+    for a, b in zip(route, route[1:]):
+        metadata = _edge_metadata(a, b)
+        leg_minutes = _edge_minutes(a, b)
+        danger = max(0.0, min(1.0, float(metadata.get("danger", 0) or 0)))
+        tags = metadata.get("tags", []) if isinstance(metadata.get("tags", []), list) else []
+        minutes += leg_minutes
+        max_danger = max(max_danger, danger)
+        known_tags.extend(tag for tag in tags if tag not in known_tags)
+        legs.append({"from": a.get("name"), "to": b.get("name"),
+                     "travel_time_minutes": leg_minutes, "danger": danger, "tags": tags})
+    risk_level = "high" if max_danger >= .66 else "medium" if max_danger >= .25 else "low" if max_danger > 0 else "none"
+    return {
+        "status": "available", "reason": "route_available",
+        "origin": start.get("name"), "destination": destination.get("name"),
+        "destination_id": destination.get("id"),
+        "route": [item.get("name") for item in route], "legs": legs,
+        "elapsed_minutes": minutes,
+        "estimated_ticks": max(1, math.ceil(minutes / max(1, tick_minutes))),
+        "narration_mode": "brief" if minutes <= 30 else "timeskip" if minutes <= 480 else "journey",
+        "risk": {"level": risk_level, "known_tags": known_tags},
+    }
+
+
+def _continue_journey_plan(active_journey: dict, *, tick_minutes: int = 60):
+    if not isinstance(active_journey, dict) or active_journey.get("status") != "interrupted":
+        return None
+    remaining_legs = [dict(leg) for leg in active_journey.get("remaining_legs", []) if isinstance(leg, dict)]
+    if not remaining_legs:
+        return None
+    minutes = sum(max(1, int(leg.get("travel_time_minutes", 1) or 1)) for leg in remaining_legs)
+    return {
+        "status": "arrived", "reason": "continued_journey",
+        "origin": active_journey.get("stopped_at") or active_journey.get("origin"),
+        "destination": active_journey.get("destination"),
+        "destination_id": active_journey.get("destination_id"),
+        "route": active_journey.get("remaining_route", []), "legs": remaining_legs,
+        "elapsed_minutes": minutes,
+        "tick_advance": max(1, math.ceil(minutes / max(1, tick_minutes))),
+        "narration_mode": "brief" if minutes <= 30 else "timeskip" if minutes <= 480 else "journey",
+        "journey_id": active_journey.get("journey_id"),
+    }
+
+
+def build_travel_plan(user_input: str, location_map: dict, current_location: str,
+                      *, tick_minutes: int = 60, seed_key: str = "", active_journey=None):
+    if re.match(r"^abandon\s+(?:the\s+)?journey[.!]?$", str(user_input or "").strip(), re.I):
+        if isinstance(active_journey, dict) and active_journey.get("status") == "interrupted":
+            return {"status": "abandoned", "reason": "player_abandoned_journey",
+                    "origin": active_journey.get("origin"),
+                    "destination": active_journey.get("destination"),
+                    "stopped_at": active_journey.get("stopped_at", current_location),
+                    "elapsed_minutes": 0, "tick_advance": 1,
+                    "journey_id": active_journey.get("journey_id")}
+        return None
+    if re.match(r"^continue\s+(?:the\s+)?journey[.!]?$", str(user_input or "").strip(), re.I):
+        return _continue_journey_plan(active_journey, tick_minutes=tick_minutes)
+    destination = extract_travel_destination(user_input, location_map)
+    if not destination:
+        return None
+    result = preview_travel(location_map, current_location, destination.get("id"), tick_minutes=tick_minutes)
+    if result.get("status") not in ("available", "already_there"):
+        result["status"] = "blocked"
+        result["tick_advance"] = 1
+        return result
+    result["status"] = "arrived"
+    result["tick_advance"] = result.pop("estimated_ticks", 0) or 1
+    legs = result["legs"]
+    for index, leg in enumerate(legs):
+        danger = leg["danger"]
+        if danger <= 0:
+            continue
+        digest = hashlib.sha256(f"{seed_key}|{index}|{leg['from']}|{leg['to']}".encode("utf-8")).hexdigest()
+        roll = int(digest[:12], 16) / float(0xFFFFFFFFFFFF)
+        if roll < danger:
+            elapsed_before = sum(previous["travel_time_minutes"] for previous in legs[:index])
+            elapsed = elapsed_before + max(1, leg["travel_time_minutes"] // 2)
+            result.update(
+                status="interrupted", reason="travel_encounter",
+                stopped_at=leg["from"],
+                elapsed_minutes=elapsed,
+                tick_advance=max(1, math.ceil(elapsed / max(1, tick_minutes))),
+                interrupted_leg=leg, danger_roll=round(roll, 6),
+            )
+            remaining_first = dict(leg)
+            remaining_first["travel_time_minutes"] = max(1, leg["travel_time_minutes"] - max(1, leg["travel_time_minutes"] // 2))
+            result["remaining_legs"] = [remaining_first] + [dict(value) for value in legs[index + 1:]]
+            result["remaining_route"] = result["route"][index:]
+            break
+    return result
+
+
+def advance_clock_minutes(clock: dict, minutes: int, calendar_config: dict = None) -> None:
+    from app.world.calendar_clock import advance_story_clock
+    if not isinstance(clock, dict) or minutes <= 0:
+        return
+    advance_story_clock(clock, {"total_seconds": int(minutes) * 60}, calendar_config)

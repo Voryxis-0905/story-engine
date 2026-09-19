@@ -1,5 +1,8 @@
 ﻿import { useRef, useEffect, useState } from 'react';
 
+import { normalizedCoordinate } from './mapCoordinates';
+import type { TravelPreview } from '../api/client';
+
 interface Location {
   id: string;
   name: string;
@@ -8,18 +11,25 @@ interface Location {
   y: number;
   zone?: string;
   tags?: string[];
-  connected_to?: string[];
+  connected_to?: Array<string | { to?: string; location_id?: string; id?: string; travel_time_minutes?: number; danger?: number }>;
   is_unlocked: boolean;
   unlock_reason_missing?: string | null;
   unlock_realm?: string | null;
   unlock_exp?: number;
   unlock_checkpoint_id?: string | null;
   is_starting_location?: boolean;
+  is_reachable?: boolean;
+  route_preview?: string[];
 }
 
 interface LocationMapProps {
   locations: Location[];
   onSelect?: (id: string) => void;
+  onTravel?: (location: Location) => void;
+  onPreview?: (location: Location) => void;
+  travelPreview?: TravelPreview | null;
+  previewLoading?: boolean;
+  currentLocation?: string;
 }
 
 function drawMap(
@@ -58,14 +68,17 @@ function drawMap(
   for (const loc of locs) {
     const from = loc;
     const connIds = loc.connected_to || [];
-    for (const connRef of connIds) {
+    for (const connection of connIds) {
+      const connRef = typeof connection === 'string'
+        ? connection
+        : (connection.to || connection.location_id || connection.id || '');
       const to = resolveLoc(connRef);
       if (!to) continue;
 
-      const x1 = from.x * size;
-      const y1 = from.y * size;
-      const x2 = to.x * size;
-      const y2 = to.y * size;
+      const x1 = normalizedCoordinate(from.x) * size;
+      const y1 = normalizedCoordinate(from.y) * size;
+      const x2 = normalizedCoordinate(to.x) * size;
+      const y2 = normalizedCoordinate(to.y) * size;
 
       const bothUnlocked = from.is_unlocked && to.is_unlocked;
 
@@ -79,8 +92,8 @@ function drawMap(
   }
 
   for (const loc of locs) {
-    const x = loc.x * size;
-    const y = loc.y * size;
+    const x = normalizedCoordinate(loc.x) * size;
+    const y = normalizedCoordinate(loc.y) * size;
     const isHover = hoverId === loc.id;
     const isSel = selId === loc.id;
     const isUnlocked = loc.is_unlocked;
@@ -147,6 +160,11 @@ function drawMap(
 export function LocationMap({
   locations,
   onSelect,
+  onTravel,
+  onPreview,
+  travelPreview,
+  previewLoading,
+  currentLocation,
 }: LocationMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -178,8 +196,8 @@ export function LocationMap({
     const my = (e.clientY - rect.top) / size;
 
     const found = locations.find((loc) => {
-      const dx = loc.x - mx;
-      const dy = loc.y - my;
+      const dx = normalizedCoordinate(loc.x) - mx;
+      const dy = normalizedCoordinate(loc.y) - my;
       return dx * dx + dy * dy < 0.003;
     });
     setHoveredId(found?.id || null);
@@ -200,8 +218,8 @@ export function LocationMap({
     const my = (e.clientY - rect.top) / size;
 
     const found = locations.find((loc) => {
-      const dx = loc.x - mx;
-      const dy = loc.y - my;
+      const dx = normalizedCoordinate(loc.x) - mx;
+      const dy = normalizedCoordinate(loc.y) - my;
       return dx * dx + dy * dy < 0.003;
     });
     if (found) {
@@ -260,6 +278,36 @@ export function LocationMap({
             <div className="text-[var(--warn)] text-[10px] font-bold pt-1">
               đŸ”’ {selectedLoc.unlock_reason_missing}
             </div>
+          )}
+          {selectedLoc.route_preview && selectedLoc.route_preview.length > 1 && (
+            <p className="text-xs text-[var(--ink-muted)]">
+              Route: {selectedLoc.route_preview.join(' → ')}
+            </p>
+          )}
+          {travelPreview?.destination === selectedLoc.name && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--bg-subtle)] p-2 space-y-1">
+              <div>Estimated time: {travelPreview.elapsed_minutes} minutes</div>
+              <div>Risk: {travelPreview.risk?.level || 'unknown'}</div>
+              {travelPreview.route.length > 1 && <div>Route: {travelPreview.route.join(' → ')}</div>}
+            </div>
+          )}
+          {selectedLoc.is_unlocked && ![selectedLoc.id, selectedLoc.name].includes(currentLocation || '') && onPreview && (
+            <button type="button" disabled={previewLoading} onClick={() => onPreview(selectedLoc)}
+              className="mt-2 w-full rounded-lg border border-[var(--line)] px-3 py-2 text-xs font-bold disabled:opacity-50">
+              {previewLoading ? 'Checking route…' : 'Preview journey'}
+            </button>
+          )}
+          {travelPreview?.destination === selectedLoc.name && travelPreview.status === 'available' && onTravel && (
+            <button
+              type="button"
+              onClick={() => onTravel(selectedLoc)}
+              className="mt-2 w-full rounded-lg bg-[var(--periwinkle-dark)] px-3 py-2 text-xs font-bold text-white hover:opacity-90"
+            >
+              Travel here
+            </button>
+          )}
+          {[selectedLoc.id, selectedLoc.name].includes(currentLocation || '') && (
+            <div className="text-[var(--ok)] text-[10px] font-bold pt-1">● Current location</div>
           )}
         </div>
       )}

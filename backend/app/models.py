@@ -133,6 +133,21 @@ class ChapterContinueRequest(BaseModel):
     expected_revision: Optional[int] = None
 
 
+class TimeSkipRequest(BaseModel):
+    amount: int = Field(default=1, ge=1, le=10000)
+    unit: Literal["minutes", "hours", "days", "weeks"] = "hours"
+    activity: str = ""
+    interruption_policy: Literal["important_events", "known_quest_deadlines", "immediate_danger", "complete", "ask"] = "important_events"
+    narration_detail: Literal["brief", "standard", "detailed"] = "standard"
+    force: bool = False
+    request_id: Optional[str] = None
+    expected_revision: Optional[int] = None
+
+
+class TravelPreviewRequest(BaseModel):
+    destination: str
+
+
 class ChapterStartRequest(BaseModel):
     opening_mode: Optional[str] = None
     opening_text: Optional[str] = None
@@ -144,8 +159,8 @@ class CharacterStateChange(BaseModel):
     sub_stats_delta: Dict[str, int] = {}
     exp_delta: int = 0
     knowledge_flags_add: List[str] = []
-    inventory_add: List[str] = []
-    inventory_remove: List[str] = []
+    inventory_add: List[Any] = []
+    inventory_remove: List[Any] = []
     karma_delta: int = 0
     alive: Optional[bool] = None
     relationships_update: Dict[str, Optional[str]] = {}
@@ -162,6 +177,7 @@ class StateChangesModel(BaseModel):
     characters: Dict[str, CharacterStateChange] = {}
     notes: str = ""
     story_clock_delta: Optional[Dict[str, Any]] = None
+    elapsed_time: Optional[Dict[str, Any]] = None
     foreshadowing_tracker_add: Optional[List[Any]] = None
     perception_data: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None
@@ -207,7 +223,7 @@ class CharacterModel(BaseModel):
     affinity: Dict[str, int] = {}
     power_stat: PowerStatModel = PowerStatModel()
     knowledge_flags: List[str] = []
-    inventory: List[str] = []
+    inventory: List[Any] = []
     karma: int = 0
     alive: bool = True
     relationships: Dict[str, str] = {}
@@ -220,6 +236,7 @@ class CharacterModel(BaseModel):
     abilities_and_limits: str = ""
     speech_style: str = ""
     secrets: str = ""
+    capabilities: List[Dict[str, Any]] = []
     perception_data: Optional[Dict[str, Any]] = None
 
 
@@ -285,8 +302,12 @@ class LocationNodeModel(BaseModel):
     unlock_exp: int = Field(default=0, description="Minimum EXP required to access")
     unlock_checkpoint_id: Optional[str] = Field(default=None, description="Checkpoint required to unlock")
     is_starting_location: bool = False
-    connected_to: List[str] = Field(default_factory=list, description="IDs of connected locations")
+    connected_to: List[Any] = Field(
+        default_factory=list,
+        description="Connected IDs or edge objects with travel metadata",
+    )
     tags: List[str] = Field(default_factory=list)
+    discovery_status: Literal["unknown", "rumored", "discovered", "visited", "creator_only"] = "discovered"
 
 
 class LocationMapModel(BaseModel):

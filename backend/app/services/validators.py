@@ -69,13 +69,28 @@ def validate_location_map(location_map: Dict[str, Any]) -> List[str]:
             errors.append(f"{label}: 'connected_to' must be a list")
         elif isinstance(connected, list):
             for target in connected:
-                if not isinstance(target, str):
-                    errors.append(f"{label}: connected_to entry must be a string, got {target!r}")
-                elif target not in location_ids:
+                target_id = target if isinstance(target, str) else (
+                    target.get("to") or target.get("location_id") or target.get("id")
+                    if isinstance(target, dict) else None
+                )
+                if not isinstance(target_id, str):
+                    errors.append(f"{label}: connected_to entry needs a string target, got {target!r}")
+                elif target_id not in location_ids:
                     errors.append(
-                        f"{label} references non-existent location id '{target}' in connected_to"
+                        f"{label} references non-existent location id '{target_id}' in connected_to"
                     )
-            if isinstance(loc_id, str) and loc_id in connected:
+                if isinstance(target, dict):
+                    minutes = target.get("travel_time_minutes")
+                    if minutes is not None and (not isinstance(minutes, (int, float)) or minutes <= 0):
+                        errors.append(f"{label}: travel_time_minutes must be positive")
+                    danger = target.get("danger")
+                    if danger is not None and (not isinstance(danger, (int, float)) or not 0 <= danger <= 1):
+                        errors.append(f"{label}: danger must be between 0 and 1")
+            targets = [
+                target if isinstance(target, str) else target.get("to") or target.get("location_id") or target.get("id")
+                for target in connected if isinstance(target, (str, dict))
+            ]
+            if isinstance(loc_id, str) and loc_id in targets:
                 errors.append(f"{label} cannot be connected to itself")
 
         unlock_exp = loc.get("unlock_exp")
@@ -93,6 +108,10 @@ def validate_location_map(location_map: Dict[str, Any]) -> List[str]:
             errors.append(
                 f"{label}: 'unlock_checkpoint_id' must be a string or null, got {unlock_cp!r}"
             )
+
+        visibility = loc.get("discovery_status", "discovered")
+        if visibility not in {"unknown", "rumored", "discovered", "visited", "creator_only"}:
+            errors.append(f"{label}: invalid discovery_status {visibility!r}")
 
     starting = [loc for loc in locations if loc.get("is_starting_location") is True]
     if not starting:

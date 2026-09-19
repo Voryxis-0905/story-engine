@@ -187,6 +187,19 @@ def choose_resolution_outcome(event: dict, outcomes: List[dict], character_state
                       or _by_resolution(outcomes, "transformed"))
             return chosen or _synthetic_outcome(event.get("event_id", ""), "prevented")
 
+    # A validated engine-owned action may lock the eventual branch while the
+    # causal event itself still waits for its trigger. This is never read from
+    # narrator output; only the action-effects whitelist can write it.
+    preferred_id = event.get("preferred_outcome_id")
+    if preferred_id:
+        preferred = next(
+            (outcome for outcome in outcomes
+             if isinstance(outcome, dict) and outcome.get("outcome_id") == preferred_id),
+            None,
+        )
+        if preferred is not None:
+            return preferred
+
     for outcome in outcomes:
         if not isinstance(outcome, dict):
             continue

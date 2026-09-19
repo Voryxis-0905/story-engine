@@ -4,6 +4,8 @@ from fastapi import APIRouter
 from app.storage import require_world, read_world_file
 from app.checkpoint_engine import check_map_based_restrictions
 from app.story.views import player_character_view
+from app.models import TravelPreviewRequest
+from app.world.travel import find_location, find_route, preview_travel
 
 try:
     from skill_limiter import check_skill_limiter
@@ -37,12 +39,9 @@ def get_world_codex(world_name: str):
 
 @router.get("/worlds/{world_name}/location-map")
 def get_world_location_map(world_name: str):
-    world_path = require_world(world_name)
-    try:
-        location_map = read_world_file(world_path, "location_map.json")
-    except FileNotFoundError:
-        return {"locations": []}
-    return location_map
+    # The legacy player endpoint now uses the same visibility projection as the
+    # status endpoint so a fallback request cannot reveal hidden locations.
+    return get_world_location_map_status(world_name)
 
 
 @router.get("/worlds/{world_name}/location-map/status")
@@ -67,6 +66,13 @@ def get_world_location_map_status(world_name: str):
     main_char_id = world_config.get("protagonist_id") or world_config.get("main_character_id", "")
     main_char = characters.get(main_char_id, {})
     locations = location_map.get("locations", [])
+    current_location = main_char.get("location", "")
+    current_on_map = find_location(location_map, current_location)
+    visible_locations = [loc for loc in locations if (
+        loc.get("discovery_status", "discovered") not in ("unknown", "creator_only")
+        or (current_on_map and loc.get("id") == current_on_map.get("id"))
+    )]
+    player_location_map = {"locations": visible_locations}
     enriched = []
     for loc in locations:
         loc_id = loc.get("id", "")
@@ -76,7 +82,11 @@ def get_world_location_map_status(world_name: str):
             {"characters": {main_char_id: {"location": location_name}}},
             {"locations": [loc]}, {main_char_id: main_char}, world_config
         )
-        is_unlocked = not violations
+        visibility = "visited" if current_on_map and loc_id == current_on_map.get("id") else loc.get("discovery_status", "discovered")
+        hidden = visibility in ("unknown", "creator_only")
+        route = find_route(player_location_map, current_location, loc_id or location_name) if current_on_map and not hidden else None
+        is_reachable = route is not None if current_on_map else True
+        is_unlocked = not violations and is_reachable and not hidden
         reasons = []
         for violation in violations:
             if violation["reason"] == "exp":
@@ -85,14 +95,57 @@ def get_world_location_map_status(world_name: str):
                 reasons.append(f"Cần đạt {violation['required']}")
             else:
                 reasons.append(f"Cần tới mốc {violation['required']}")
+        if not is_reachable:
+            reasons.append("Không có tuyến đường nối từ vị trí hiện tại")
+        if hidden:
+            reasons = ["Chưa khám phá địa điểm này"]
+
+        public_location = dict(loc)
+        if hidden:
+            public_location.update(name="Unknown location", description="", tags=[], connected_to=[])
 
         enriched.append({
-            **loc,
+            **public_location,
+            "discovery_status": visibility,
             "is_unlocked": is_unlocked,
+            "is_reachable": is_reachable,
+            "route_preview": [item.get("name") or item.get("id") for item in route] if route else [],
             "unlock_reason_missing": "; ".join(reasons) if reasons else None,
         })
 
     return {"locations": enriched}
+
+
+@router.post("/worlds/{world_name}/travel/preview")
+def preview_world_travel(world_name: str, request: TravelPreviewRequest):
+    """Return an engine-owned route preview without rolling or writing state."""
+    world_path = require_world(world_name)
+    location_map = read_world_file(world_path, "location_map.json")
+    character_state = read_world_file(world_path, "character_state.json")
+    world_config = read_world_file(world_path, "world_config.json")
+    characters = character_state.get("characters", {})
+    protagonist_id = world_config.get("protagonist_id") or world_config.get("main_character_id", "")
+    protagonist = characters.get(protagonist_id, {})
+    result = preview_travel(
+        location_map, protagonist.get("location", ""), request.destination,
+        tick_minutes=int(world_config.get("travel_tick_minutes", 60) or 60),
+    )
+    destination = find_location(location_map, request.destination)
+    if destination and destination.get("discovery_status", "discovered") in ("unknown", "creator_only"):
+        return {"status": "blocked", "reason": "destination_undiscovered", "destination": "Unknown location",
+                "route": [], "legs": [], "elapsed_minutes": 0, "estimated_ticks": 0,
+                "requirements_missing": [{"reason": "undiscovered"}]}
+    if destination and result.get("status") == "available":
+        destination_name = destination.get("name") or destination.get("id", "")
+        violations = check_map_based_restrictions(
+            {"characters": {protagonist_id: {"location": destination_name}}},
+            {"locations": [destination]}, {protagonist_id: protagonist}, world_config,
+        )
+        if violations:
+            result.update(status="blocked", reason="destination_locked",
+                          requirements_missing=violations)
+    result.setdefault("requirements_missing", [])
+    return result
 
 
 @router.get("/worlds/{world_name}/quest_board")

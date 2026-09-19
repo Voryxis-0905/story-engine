@@ -453,7 +453,7 @@ def update_foreshadowings(world_name: str, req: ForeshadowingsUpdateReq):
 _EDITABLE_CHARACTER_FIELDS = frozenset({
     "alive", "location", "inventory", "knowledge_flags", "relationships",
     "karma", "age", "appearance", "personality", "backstory",
-    "abilities_and_limits", "speech_style", "secrets",
+    "abilities_and_limits", "speech_style", "secrets", "capabilities",
 })
 
 
@@ -510,7 +510,7 @@ def creator_edit(world_name: str, req: dict):
             if field == "alive" and not isinstance(value, bool):
                 errors.append("alive must be a boolean")
                 continue
-            if field in ("inventory", "knowledge_flags") and not isinstance(value, list):
+            if field in ("inventory", "knowledge_flags", "capabilities") and not isinstance(value, list):
                 errors.append(f"{field} must be a list")
                 continue
             if field == "relationships" and not isinstance(value, dict):
@@ -518,6 +518,57 @@ def creator_edit(world_name: str, req: dict):
                 continue
             character[field] = value
             applied.append({"kind": "character", "character_id": char_id, "field": field})
+        elif kind == "inventory_item":
+            from app.story.inventory import add_inventory_item, remove_inventory_item
+            char_id = change.get("character_id")
+            operation = change.get("operation")
+            item = change.get("item")
+            character = characters.get(char_id)
+            if not isinstance(character, dict):
+                errors.append(f"unknown character '{char_id}'")
+                continue
+            if operation not in ("add", "remove"):
+                errors.append("inventory operation must be add or remove")
+                continue
+            if operation == "add":
+                add_inventory_item(character.setdefault("inventory", []), item)
+            else:
+                remove_inventory_item(character.setdefault("inventory", []), item)
+            applied.append({"kind": "inventory_item", "character_id": char_id, "operation": operation})
+        elif kind == "location":
+            location_id = change.get("location_id")
+            field = change.get("field")
+            value = change.get("value")
+            location = next((loc for loc in location_map.get("locations", [])
+                             if isinstance(loc, dict) and loc.get("id") == location_id), None)
+            if location is None:
+                errors.append(f"unknown location '{location_id}'")
+                continue
+            if field not in {"name", "description", "connected_to", "tags", "discovery_status"}:
+                errors.append(f"location field '{field}' is not editable")
+                continue
+            if field in ("connected_to", "tags") and not isinstance(value, list):
+                errors.append(f"{field} must be a list")
+                continue
+            if field == "discovery_status" and value not in {"unknown", "rumored", "discovered", "visited", "creator_only"}:
+                errors.append("invalid discovery_status")
+                continue
+            location[field] = value
+            applied.append({"kind": "location", "location_id": location_id, "field": field})
+        elif kind == "active_journey":
+            value = change.get("value")
+            if value is not None and not isinstance(value, dict):
+                errors.append("active journey must be an object or null")
+                continue
+            world_config["active_journey"] = value
+            applied.append({"kind": "active_journey"})
+        elif kind == "action_rules":
+            value = change.get("value")
+            if not isinstance(value, list) or any(not isinstance(rule, dict) for rule in value):
+                errors.append("action_rules must be a list of objects")
+                continue
+            world_config["action_rules"] = value
+            applied.append({"kind": "action_rules", "count": len(value)})
         elif kind == "fact_override":
             fact_id = change.get("fact_id")
             statement = change.get("statement")
@@ -557,6 +608,10 @@ def creator_edit(world_name: str, req: dict):
             })
         else:
             errors.append(f"unknown change kind '{kind}'")
+
+    if any(item.get("kind") == "location" for item in applied):
+        from app.services.validators import validate_location_map
+        errors.extend(validate_location_map(location_map))
 
     validation = {"ok": not errors, "errors": errors}
     if preview:
