@@ -1,6 +1,7 @@
 ﻿import { useRef, useEffect, useState } from 'react';
 
 import { normalizedCoordinate } from './mapCoordinates';
+import type { TravelPreview } from '../api/client';
 
 interface Location {
   id: string;
@@ -25,6 +26,9 @@ interface LocationMapProps {
   locations: Location[];
   onSelect?: (id: string) => void;
   onTravel?: (location: Location) => void;
+  onPreview?: (location: Location) => void;
+  travelPreview?: TravelPreview | null;
+  previewLoading?: boolean;
   currentLocation?: string;
 }
 
@@ -157,6 +161,9 @@ export function LocationMap({
   locations,
   onSelect,
   onTravel,
+  onPreview,
+  travelPreview,
+  previewLoading,
   currentLocation,
 }: LocationMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -277,7 +284,20 @@ export function LocationMap({
               Route: {selectedLoc.route_preview.join(' → ')}
             </p>
           )}
-          {selectedLoc.is_unlocked && ![selectedLoc.id, selectedLoc.name].includes(currentLocation || '') && onTravel && (
+          {travelPreview?.destination === selectedLoc.name && (
+            <div className="rounded-lg border border-[var(--line)] bg-[var(--bg-subtle)] p-2 space-y-1">
+              <div>Estimated time: {travelPreview.elapsed_minutes} minutes</div>
+              <div>Risk: {travelPreview.risk?.level || 'unknown'}</div>
+              {travelPreview.route.length > 1 && <div>Route: {travelPreview.route.join(' → ')}</div>}
+            </div>
+          )}
+          {selectedLoc.is_unlocked && ![selectedLoc.id, selectedLoc.name].includes(currentLocation || '') && onPreview && (
+            <button type="button" disabled={previewLoading} onClick={() => onPreview(selectedLoc)}
+              className="mt-2 w-full rounded-lg border border-[var(--line)] px-3 py-2 text-xs font-bold disabled:opacity-50">
+              {previewLoading ? 'Checking route…' : 'Preview journey'}
+            </button>
+          )}
+          {travelPreview?.destination === selectedLoc.name && travelPreview.status === 'available' && onTravel && (
             <button
               type="button"
               onClick={() => onTravel(selectedLoc)}

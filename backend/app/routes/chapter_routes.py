@@ -15,7 +15,7 @@ from app.engine import (
 )
 from app.models import (
     ChapterContinueRequest, ChapterStartRequest, LintChapterRequest,
-    RewriteChapterRequest, RegenerateRequest
+    RewriteChapterRequest, RegenerateRequest, TimeSkipRequest
 )
 from app.persistence import commit_world_files, locked_world
 from app.story.inventory import inventory_view
@@ -47,6 +47,44 @@ def chapter_continue(world_name: str, req: ChapterContinueRequest):
         narrator_input=req.user_input,
         request_id=req.request_id,
         expected_revision=req.expected_revision,
+    )
+
+
+def _time_skip_preview(world_name: str, req: TimeSkipRequest):
+    from app.story.discovery import load_discoveries
+    from app.world_events import load_world_events
+    from app.world.time_skip import preview_time_skip
+    world_path = require_world(world_name)
+    config = read_world_file(world_path, "world_config.json")
+    return preview_time_skip(
+        req.model_dump(), config,
+        load_world_events(world_path).get("events", []),
+        load_discoveries(world_path),
+    )
+
+
+@router.post("/worlds/{world_name}/time-skip/preview")
+def time_skip_preview(world_name: str, req: TimeSkipRequest):
+    return _time_skip_preview(world_name, req)
+
+
+@router.post("/worlds/{world_name}/time-skip/execute")
+def time_skip_execute(world_name: str, req: TimeSkipRequest):
+    from app.world.time_skip import display_time_skip
+    preview = _time_skip_preview(world_name, req)
+    if preview.get("blocked"):
+        raise HTTPException(status_code=409, detail={
+            "reason": "known_deadline_imminent",
+            "message": "A known deadline is imminent. Act now or use Creator override.",
+            "preview": preview,
+        })
+    return _generate_chapter(
+        world_name,
+        narrator_input=display_time_skip(req.model_dump(), preview),
+        display_input=display_time_skip(req.model_dump(), preview),
+        request_id=req.request_id,
+        expected_revision=req.expected_revision,
+        time_skip_request=req.model_dump(),
     )
 
 
@@ -127,7 +165,8 @@ def chapter_start(world_name: str, req: ChapterStartRequest):
                    f"chay lai seed-demo hoac set thu cong)."
         )
     synthetic_instruction = build_opening_instruction(checkpoint)
-    return _generate_chapter(world_name, narrator_input=synthetic_instruction, display_input="")
+    return _generate_chapter(world_name, narrator_input=synthetic_instruction,
+                             display_input="", opening_setup=True)
 
 
 @router.post("/worlds/{world_name}/chapter/generate-prelude")
@@ -277,6 +316,7 @@ def get_play_state(world_name: str):
     if protagonist_id and protagonist_id in character_state.get("characters", {}):
         p = character_state["characters"][protagonist_id]
         from app.story.knowledge import project_knowledge_for_subject
+        from app.story.capabilities import capability_evidence
         from app.storage import read_world_canon
         canon_facts = read_world_canon(world_path).get("facts", [])
         protagonist_data = {
@@ -292,7 +332,8 @@ def get_play_state(world_name: str):
             ),
             "alive": p.get("alive", True),
             "relationships": p.get("relationships", {}),
-            "age": p.get("age", "")
+            "age": p.get("age", ""),
+            "capabilities": capability_evidence(p),
         }
 
     total_checkpoints = len(checkpoints)
@@ -333,12 +374,15 @@ def get_play_state(world_name: str):
         "arc_roadmap": world_config.get("arc_roadmap", {}),
         "unlocked_cards": unlocked_cards,
         "story_clock": story_clock,
+        "calendar": world_config.get("calendar"),
+        "prelude_confirmed": bool(world_config.get("prelude_confirmed")),
         "foreshadowing_tracker": foreshadowing_tracker,
         "foreshadowings": foreshadowing_tracker,
         "output_length": world_config.get("output_length", "Standard"),
         "revision": int(world_config.get("revision", 0) or 0),
         "lifecycle_status": world_config.get("lifecycle_status", "active"),
         "story_mode": world_config.get("story_mode", "endless"),
+        "active_journey": world_config.get("active_journey"),
         "epilogue": _read_epilogue(world_path),
         "style_card": get_world_style_card(world_name)
     }

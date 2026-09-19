@@ -4,7 +4,7 @@ from typing import List
 
 # Bump when the persisted world/save shape changes, and add a matching
 # migration step in app/world/schema.py. Worlds without the field are v1.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 STYLE_CARD_TEMPLATE = {
     "perspective": "third_person_limited",
@@ -38,6 +38,8 @@ TEMPLATES = {
         "prelude_enabled": False,
         "prelude_confirmed": False,
         "language": "en",
+        "calendar": None,
+        "timekeeping_mode": "legacy",
         "story_clock": {
             "year": 1,
             "month": 1,
@@ -58,7 +60,8 @@ TEMPLATES = {
         "quest_board_enabled": False,
         "allow_unchecked_commit": False,
         "revision": 0,
-        "pre_turn_snapshot": None
+        "pre_turn_snapshot": None,
+        "active_journey": None
     },
     "card_registry.json": {
         "cards": []

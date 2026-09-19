@@ -124,6 +124,22 @@ def resolve_action(
     checks.append({"name": "skills", "ok": not missing_skills,
                    "detail": f"missing: {missing_skills}" if missing_skills else "ok"})
 
+    from app.story.capabilities import find_capability
+    required_capabilities = rule.get("required_capabilities", []) or []
+    capability_matches = []
+    missing_capabilities = []
+    for required in required_capabilities:
+        match = find_capability(protagonist, required)
+        if match:
+            capability_matches.append({"required": required, "evidence": match})
+        else:
+            missing_capabilities.append(required)
+    checks.append({
+        "name": "capability_evidence", "ok": not missing_capabilities,
+        "detail": (f"missing: {missing_capabilities}" if missing_capabilities else "ok"),
+        "evidence": capability_matches,
+    })
+
     location = protagonist.get("location", "")
     access_ok = _access_ok(location, checkpoint)
     checks.append({"name": "access", "ok": access_ok,
@@ -160,7 +176,7 @@ def resolve_action(
                 capability_detail = f"needs exp >= {min_exp}"
     checks.append({"name": "capability", "ok": capability_ok, "detail": capability_detail})
 
-    hard_fail = missing_tools or missing_skills or not access_ok or missing_tags or not capability_ok
+    hard_fail = missing_tools or missing_skills or missing_capabilities or not access_ok or missing_tags or not capability_ok
     if hard_fail:
         alternatives = list(rule.get("alternatives", []))
         result = "conditional" if alternatives else "impossible"
@@ -169,6 +185,8 @@ def resolve_action(
             reason_parts.append(f"missing tools: {missing_tools}")
         if missing_skills:
             reason_parts.append(f"missing skills: {missing_skills}")
+        if missing_capabilities:
+            reason_parts.append(f"missing capability evidence: {missing_capabilities}")
         if not access_ok:
             reason_parts.append(f"cannot act from '{location}'")
         if missing_tags:

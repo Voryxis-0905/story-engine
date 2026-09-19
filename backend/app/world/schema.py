@@ -110,11 +110,18 @@ def _migrate_v4_to_v5(world_path: str, config: dict) -> dict:
     return config
 
 
+def _migrate_v5_to_v6(world_path: str, config: dict) -> dict:
+    """v5 -> v6 persists resumable narrative journeys."""
+    config.setdefault("active_journey", None)
+    return config
+
+
 MIGRATIONS = {
     1: _migrate_v1_to_v2,
     2: _migrate_v2_to_v3,
     3: _migrate_v3_to_v4,
     4: _migrate_v4_to_v5,
+    5: _migrate_v5_to_v6,
 }
 
 

@@ -108,6 +108,7 @@ def call_writer_stage(payload: dict, scene_outline: str, facts_this_turn: list,
     writer_payload = dict(payload)
     writer_payload["scene_outline"] = scene_outline
     writer_payload["facts_this_turn"] = facts_this_turn
+    writer_payload["planned_state_changes"] = state_changes
 
     try:
         writer_raw = call_llm(

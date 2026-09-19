@@ -11,9 +11,11 @@ const mocks = vi.hoisted(() => ({
       continue: vi.fn(),
       start: vi.fn(),
       regenerate: vi.fn(),
+      previewTimeSkip: vi.fn(),
+      executeTimeSkip: vi.fn(),
       prelude: { generate: vi.fn(), confirm: vi.fn(), regenerate: vi.fn() },
     },
-    map: { status: vi.fn(), get: vi.fn() },
+    map: { status: vi.fn(), get: vi.fn(), previewTravel: vi.fn() },
     worlds: { affinityGraph: vi.fn(), updateConfig: vi.fn() },
     discovery: { questBoard: vi.fn(), journal: vi.fn() },
   },
@@ -47,10 +49,13 @@ beforeEach(() => {
   api.play.continue.mockResolvedValue({ chapter: chapter() });
   api.play.start.mockResolvedValue({ chapter: chapter() });
   api.play.regenerate.mockResolvedValue({});
+  api.play.previewTimeSkip.mockResolvedValue({ requested_minutes: 1440, granted_minutes: 180, requested_ticks: 24, granted_ticks: 3, start_tick: 0, end_tick: 3, warnings: [{ kind: 'known_deadline', event_id: 'storm', title: 'Storm', deadline_tick: 3, ticks_away: 3 }], will_interrupt: true, requires_confirmation: true, activity: 'Study', forced: false });
+  api.play.executeTimeSkip.mockResolvedValue({ chapter: chapter({ user_input: 'Time skip 1 days: Study' }), revision: 2 });
   api.play.prelude.generate.mockResolvedValue({});
   api.play.prelude.confirm.mockResolvedValue({});
   api.map.status.mockResolvedValue({ locations: [] });
   api.map.get.mockResolvedValue({ locations: [] });
+  api.map.previewTravel.mockResolvedValue({ status: 'available', destination: 'Old Forest', route: ['Sect', 'Old Forest'], legs: [], elapsed_minutes: 90, estimated_ticks: 2, risk: { level: 'low', known_tags: [] } });
   api.worlds.affinityGraph.mockResolvedValue({ nodes: [], edges: [] });
   api.worlds.updateConfig.mockResolvedValue({});
   api.discovery.questBoard.mockResolvedValue({ quests: [], enabled: true });
@@ -62,12 +67,43 @@ function render(world = 'WorldA') {
 }
 
 describe('usePlaySession input/retry loop', () => {
+  it('previews and executes a time skip without overwriting typed action text', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+    act(() => result.current.setInput('keep this action'));
+    const request: any = { amount: 1, unit: 'days', activity: 'Study', interruption_policy: 'important_events' };
+    await act(async () => { await result.current.handlePreviewTimeSkip(request); });
+    expect(result.current.timeSkipPreview?.granted_minutes).toBe(180);
+    expect(result.current.input).toBe('keep this action');
+    await act(async () => { await result.current.handleExecuteTimeSkip(request); });
+    expect(api.play.executeTimeSkip).toHaveBeenCalledWith('WorldA', expect.objectContaining({ activity: 'Study', expected_revision: undefined }));
+    expect(result.current.input).toBe('keep this action');
+  });
   it('turns a map destination into an editable travel intent', async () => {
     const { result } = render();
     await waitFor(() => expect(api.play.state).toHaveBeenCalled());
     act(() => result.current.handleTravelTo({ id: 'forest', name: 'Old Forest' }));
     expect(result.current.input).toBe('Travel to Old Forest.');
     expect(result.current.activeDrawer).toBeNull();
+    expect(api.play.continue).not.toHaveBeenCalled();
+  });
+
+  it('previews travel without sending or changing the input', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+    act(() => result.current.setInput('keep this draft'));
+    await act(async () => { await result.current.handlePreviewTravel({ id: 'forest', name: 'Old Forest' }); });
+    expect(api.map.previewTravel).toHaveBeenCalledWith('WorldA', 'Old Forest');
+    expect(result.current.travelPreview?.elapsed_minutes).toBe(90);
+    expect(result.current.input).toBe('keep this draft');
+    expect(api.play.continue).not.toHaveBeenCalled();
+  });
+
+  it('turns an inventory command into editable input without mutating state', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+    act(() => result.current.handleItemAction('Equip', { instance_id: 'blade_1', name: 'Moon Blade' } as any));
+    expect(result.current.input).toBe('Equip Moon Blade.');
     expect(api.play.continue).not.toHaveBeenCalled();
   });
 
