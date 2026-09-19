@@ -2122,6 +2122,12 @@ class ReliabilityTests(unittest.TestCase):
         evidence = next(c for c in result['checks'] if c['name'] == 'capability_evidence')['evidence']
         self.assertEqual(evidence[0]['evidence']['sources'], ['backstory'])
 
+    def test_custom_openai_endpoint_does_not_rewrite_model_as_openclaw(self):
+        from app.llm_client import _is_openclaw_target
+        self.assertFalse(_is_openclaw_target('custom', 'https://api.deepseek.com/chat/completions'))
+        self.assertTrue(_is_openclaw_target('openclaw', 'https://any.example/v1'))
+        self.assertTrue(_is_openclaw_target('custom', 'http://127.0.0.1:18789/v1/chat/completions'))
+
     def test_committed_action_effects_drive_event_outcome_before_default(self):
         config = self.read('world_config.json')
         config['action_rules'] = [{
