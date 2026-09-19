@@ -51,3 +51,7 @@ Set `STORY_ENGINE_DATA_DIR` to choose a separate local data directory. Without i
 - `data/` — created locally and excluded from Git.
 
 Read the [documentation index](docs/README.md) and [contribution guide](CONTRIBUTING.md) before changing the project.
+
+## License
+
+Story Engine is licensed under the [MIT License](LICENSE).
