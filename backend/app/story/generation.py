@@ -110,32 +110,51 @@ def call_writer_stage(payload: dict, scene_outline: str, facts_this_turn: list,
     writer_payload["facts_this_turn"] = facts_this_turn
     writer_payload["planned_state_changes"] = state_changes
 
-    try:
-        writer_raw = call_llm(
-            WRITER_SYSTEM_PROMPT,
-            json.dumps(writer_payload, ensure_ascii=False),
-            user_input_for_mock=effective_user_input,
-            world_name=world_name,
-            role="writer"
-        )
-    except RateLimitError as e:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "message": f"OpenRouter is rate-limiting writer agent: {e}",
-                "retry_after": e.retry_after
-            }
-        )
-    except LLMCallError as e:
-        raise HTTPException(status_code=503, detail=f"Failed to call writer agent: {e}")
+    def call_writer_once(payload_for_call: dict) -> str:
+        try:
+            return call_llm(
+                WRITER_SYSTEM_PROMPT,
+                json.dumps(payload_for_call, ensure_ascii=False),
+                user_input_for_mock=effective_user_input,
+                world_name=world_name,
+                role="writer"
+            )
+        except RateLimitError as e:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "message": f"OpenRouter is rate-limiting writer agent: {e}",
+                    "retry_after": e.retry_after
+                }
+            )
+        except LLMCallError as e:
+            raise HTTPException(status_code=503, detail=f"Failed to call writer agent: {e}")
 
+    writer_raw = call_writer_once(writer_payload)
     try:
         writer_parsed = parse_llm_json(writer_raw)
-    except (json.JSONDecodeError, ValueError):
-        raise HTTPException(
-            status_code=502,
-            detail="Writer returned invalid JSON, could not parse."
+    except (json.JSONDecodeError, ValueError) as first_error:
+        logger.warning(
+            "Writer returned invalid JSON for world=%s; retrying once with a format correction: %s",
+            world_name, first_error
         )
+        retry_payload = dict(writer_payload)
+        format_note = (
+            "Your previous writer response was not valid JSON. Return ONLY valid JSON matching "
+            "the writer schema. Do not include markdown, code fences, commentary, or thinking text. "
+            "Required keys include chapter_text, chapter_end, chapter_title, state_changes, steps, "
+            "variants, perception_data, and draft_entities."
+        )
+        existing_note = str(writer_payload.get("correction_note") or "").strip()
+        retry_payload["correction_note"] = f"{existing_note}\n\n[Format Correction]\n{format_note}".strip() if existing_note else format_note
+        retry_raw = call_writer_once(retry_payload)
+        try:
+            writer_parsed = parse_llm_json(retry_raw)
+        except (json.JSONDecodeError, ValueError):
+            raise HTTPException(
+                status_code=502,
+                detail="Writer returned invalid JSON after one format retry, could not parse."
+            )
 
     chapter_text = writer_parsed.get("chapter_text", "")
     chapter_end = bool(writer_parsed.get("chapter_end", False))

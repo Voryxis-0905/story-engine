@@ -72,6 +72,30 @@ class ReliabilityTests(unittest.TestCase):
                           'location_effects': [{'location_id': 'village', 'tags_add': ['ruined'], 'tags_remove': ['safe']}]}],
         }]})
 
+    def test_writer_invalid_json_retries_once_with_format_correction(self):
+        calls = {'writer': 0}
+        writer_payloads = []
+
+        def flaky_writer(system_prompt, user_prompt, *args, **kwargs):
+            if system_prompt == main.PLANNER_SYSTEM_PROMPT:
+                return main.mock_planner_response(kwargs.get('user_input_for_mock', ''))
+            if system_prompt == main.WRITER_SYSTEM_PROMPT:
+                calls['writer'] += 1
+                writer_payloads.append(json.loads(user_prompt))
+                if calls['writer'] == 1:
+                    return 'not json at all'
+                return main.mock_narrator_response(kwargs.get('user_input_for_mock', ''))
+            return main.mock_consistency_checker_response()
+
+        with patch.object(main, 'call_llm', side_effect=flaky_writer):
+            response = self.post('chapter/continue', {'user_input': 'Observe.'})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(calls['writer'], 2)
+        self.assertNotIn('correction_note', writer_payloads[0])
+        self.assertIn('valid JSON', writer_payloads[1]['correction_note'])
+        self.assertEqual(len(self.read('chapters.json')['chapters']), 1)
+
     def test_event_consequences_persist_and_do_not_repeat(self):
         self.setup_event()
         for _ in range(2):
