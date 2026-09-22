@@ -346,24 +346,26 @@ export const api = {
   },
   creator: {
     saves: {
-      list: (worldName: string) => fetchJSON<any[]>(`/worlds/${worldName}/saves`),
+      list: async (worldName: string) => {
+        const res = await fetchJSON<{ saves?: any[] } | any[]>(`/worlds/${worldName}/saves`);
+        if (Array.isArray(res)) return res;
+        return res?.saves || [];
+      },
       create: (worldName: string, label: string) =>
-        fetchJSON<any>(`/worlds/${worldName}/saves/create`, {
+        fetchJSON<any>(`/worlds/${worldName}/saves`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label }),
         }),
       restore: (worldName: string, saveId: string) =>
-        fetchJSON<any>(`/worlds/${worldName}/saves/restore`, {
+        fetchJSON<any>(`/worlds/${worldName}/saves/${saveId}/restore`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ save_id: saveId }),
         }),
       branch: (worldName: string, saveId: string, newWorldName: string) =>
-        fetchJSON<any>(`/worlds/${worldName}/saves/branch`, {
+        fetchJSON<any>(`/worlds/${worldName}/saves/${saveId}/branch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ save_id: saveId, new_world_name: newWorldName }),
+          body: JSON.stringify({ new_world_name: newWorldName }),
         }),
     },
     styleCard: {
@@ -385,20 +387,24 @@ export const api = {
         }),
     },
     canonLog: {
-      get: (worldName: string) => fetchJSON<any>(`/worlds/${worldName}/canon-log`),
+      get: async (worldName: string) => {
+        const res = await fetchJSON<{ world?: string; facts?: any[]; total?: number } | any[]>(`/worlds/${worldName}/studio/canon-log`);
+        if (Array.isArray(res)) return res;
+        return res?.facts || [];
+      },
       add: (worldName: string, entry: any) =>
-        fetchJSON<any>(`/worlds/${worldName}/canon-log`, {
+        fetchJSON<any>(`/worlds/${worldName}/studio/canon-log`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(entry),
         }),
     },
     export: (worldName: string) => fetchJSON<any>(`/worlds/${worldName}/export`),
-    fork: (worldName: string, targetName: string) =>
+    fork: (worldName: string, checkpointId: string, newWorldName: string) =>
       fetchJSON<any>(`/worlds/${worldName}/fork`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target_name: targetName }),
+        body: JSON.stringify({ checkpoint_id: checkpointId, new_world_name: newWorldName }),
       }),
   },
   config: {

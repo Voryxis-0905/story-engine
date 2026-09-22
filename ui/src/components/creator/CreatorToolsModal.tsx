@@ -38,7 +38,7 @@ export const CreatorToolsModal: React.FC<CreatorToolsModalProps> = ({ worldName,
     try {
       if (activeTab === 'saves') {
         const list = await api.creator.saves.list(worldName);
-        setSaves(list || []);
+        setSaves(Array.isArray(list) ? list : (list as any)?.saves || []);
       } else if (activeTab === 'style') {
         const sc = await api.creator.styleCard.get(worldName);
         setStyleCard(sc || {});
@@ -47,7 +47,7 @@ export const CreatorToolsModal: React.FC<CreatorToolsModalProps> = ({ worldName,
         setTraits(tr || {});
       } else if (activeTab === 'canon') {
         const cl = await api.creator.canonLog.get(worldName);
-        setCanonLog(Array.isArray(cl) ? cl : []);
+        setCanonLog(Array.isArray(cl) ? cl : (cl as any)?.facts || []);
       } else if (activeTab === 'export') {
         const exp = await api.creator.export(worldName);
         setExportData(JSON.stringify(exp, null, 2));
