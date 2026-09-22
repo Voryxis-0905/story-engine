@@ -1,0 +1,38 @@
+# Normalize line endings across the whole repository.
+#
+# Without this file every tool that writes a file on Windows (editors, scripts,
+# `cp`, agent tooling) can flip LF to CRLF, and git then reports the entire file
+# as changed. That turned a 15-file change into a 105-file "diff" of 26k lines,
+# making real history unreadable.
+#
+# `text=auto` lets git normalize to LF in the repository, and `eol=lf` forces LF
+# in the working tree too, so the working tree and the index can never disagree
+# about line endings again.
+* text=auto eol=lf
+
+# Binary files must never be normalized or diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.zip binary
+*.gz binary
+*.mp3 binary
+*.mp4 binary
+*.webp binary
+
+# Lockfiles are generated with LF and must stay byte-identical, otherwise every
+# install produces a spurious diff.
+package-lock.json -text
+*.lock -text
+
+# Batch/PowerShell on Windows expect CRLF to run correctly.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
