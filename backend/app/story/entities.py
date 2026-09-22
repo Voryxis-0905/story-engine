@@ -112,6 +112,44 @@ def _validate_imported_package(pkg: dict, templates: dict) -> tuple:
     return full_world_config, {"cards": validated_cards}, {"checkpoints": validated_cps}, {"characters": validated_chars}
 
 
+# Core state files an import package may carry in addition to the required four.
+# They are part of CORE_STATE_FILES, so they get snapshotted and schema-scanned
+# like any other world state: a package that ships one with the wrong collection
+# type must be rejected at the boundary, not left to fail later inside a turn.
+OPTIONAL_IMPORTED_CORE_FILES = (
+    ("world_events", "world_events.json"),
+    ("location_map", "location_map.json"),
+)
+
+
+def validate_imported_optional_core_files(pkg: dict, templates: dict) -> dict:
+    """Return {filename: content} for the optional core files present in pkg.
+
+    Expected collection fields are read from the template, so this stays correct
+    when a template gains a new list field.
+    """
+    normalized = {}
+    for package_key, filename in OPTIONAL_IMPORTED_CORE_FILES:
+        raw = pkg.get(package_key)
+        if raw is None:
+            continue
+        if not isinstance(raw, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Import package error: '{package_key}' must be a valid object",
+            )
+        template = templates[filename]
+        merged = {**template, **raw}
+        for field, template_value in template.items():
+            if isinstance(template_value, list) and not isinstance(merged.get(field), list):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Import package error: '{package_key}.{field}' must be an array",
+                )
+        normalized[filename] = merged
+    return normalized
+
+
 def normalize_character_dict(raw_chars: dict) -> dict:
     validated_chars = {}
     for cid, cdata in raw_chars.items():

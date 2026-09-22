@@ -16,9 +16,15 @@ EVENT_CLASSES = ("organized", "contingent", "consequence")
 
 
 def load_world_events(world_path: str) -> dict:
+    """Read world_events.json, treating "absent" as an empty event list.
+
+    Reads through the shared world-file helper so a corrupt file raises
+    ``WorldFileUnreadable`` (answered as 409) instead of a bare JSONDecodeError.
+    """
+    from app.storage import read_world_file
+
     try:
-        with open(f"{world_path}/world_events.json", "r", encoding="utf-8") as f:
-            return json.load(f)
+        return read_world_file(world_path, "world_events.json")
     except FileNotFoundError:
         return {"events": []}
 

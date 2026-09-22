@@ -6,11 +6,38 @@ an Origin we do not trust, so a random website cannot mutate local state either.
 Non-browser clients (curl, tests, desktop launchers) send no Origin and pass.
 """
 import os
+from urllib.parse import urlparse
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
 _LOCAL_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether a URL targets this machine.
+
+    Parses the URL instead of substring-matching it: ``"127.0.0.1" in url``
+    accepts ``http://127.0.0.1@attacker.example/v1`` (there it is userinfo, not
+    the host) and ``http://notlocalhost.example/v1``. Used to keep a URL that
+    arrived from outside this app from sending traffic off this machine.
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if (parsed.hostname or "").lower() not in _LOCAL_HOSTNAMES:
+        return False
+    try:
+        # Any port is fine; this only rejects a malformed one ("localhost:abc").
+        parsed.port
+    except ValueError:
+        return False
+    return True
 
 
 def _configured_origins() -> set:

@@ -3,13 +3,32 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.security import allowed_origins_for_cors, local_origin_guard
+from app.storage import WorldFileUnreadable
 
 logger = logging.getLogger(__name__)
+
+
+async def _unreadable_world_file_handler(request: Request, exc: WorldFileUnreadable) -> JSONResponse:
+    """Answer corrupt world state with 409 rather than a bare 500.
+
+    The world cannot be served, but the client can act on it: restore a save or
+    re-import the world. A stack trace would say none of that.
+    """
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": (
+                f"World file '{exc.filename}' exists but cannot be read ({exc.reason}). "
+                "The world state is corrupt; restore it from a save or re-import the world."
+            )
+        },
+    )
 
 
 @asynccontextmanager
@@ -26,7 +45,10 @@ async def lifespan(application: FastAPI):
 
 
 def create_app() -> FastAPI:
-    from app.routes import world_routes, builder_routes, chapter_routes, creator_routes, studio_routes
+    from app.routes import (
+        world_routes, builder_routes, chapter_routes, creator_routes, studio_routes,
+        discovery_routes, demo_routes, runtime_routes,
+    )
 
     application = FastAPI(lifespan=lifespan)
     application.add_middleware(
@@ -37,8 +59,10 @@ def create_app() -> FastAPI:
         allow_private_network=True,
     )
     application.middleware("http")(local_origin_guard)
+    application.add_exception_handler(WorldFileUnreadable, _unreadable_world_file_handler)
     for router in (world_routes.router, builder_routes.router, chapter_routes.router,
-                   creator_routes.router, studio_routes.router):
+                   creator_routes.router, studio_routes.router, discovery_routes.router,
+                   demo_routes.router, runtime_routes.router):
         application.include_router(router)
 
     frontend_dir = Path(__file__).resolve().parents[2] / "frontend"

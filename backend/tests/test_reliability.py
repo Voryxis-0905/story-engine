@@ -11,9 +11,10 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
 from fastapi.testclient import TestClient
-from app import storage, persistence, engine, chapter_generator
+from app import storage, persistence, engine, chapter_generator, security
 from app.routes import world_routes
 from app.world import schema
+from app.world import map_rules
 from app.checkpoint_engine import check_map_based_restrictions
 from app.world.map_rules import reconcile_checkpoint_location_gates
 from app.world.calendar_clock import advance_story_clock, normalize_start_clock, normalize_elapsed_time
@@ -55,6 +56,10 @@ class ReliabilityTests(unittest.TestCase):
     def read(self, filename):
         return json.loads((self.path / filename).read_text(encoding='utf-8'))
 
+    @staticmethod
+    def read_from(world_path, filename):
+        return json.loads((Path(world_path) / filename).read_text(encoding='utf-8'))
+
     def write(self, filename, value):
         storage.write_world_file(str(self.path), filename, value)
 
@@ -71,6 +76,48 @@ class ReliabilityTests(unittest.TestCase):
                           'world_flags_set': {'raid_done': True},
                           'location_effects': [{'location_id': 'village', 'tags_add': ['ruined'], 'tags_remove': ['safe']}]}],
         }]})
+
+    def test_new_world_owns_every_core_state_file(self):
+        """A freshly created world must already own all of its state files.
+
+        Snapshots, saves, branches and restores all copy only files that exist.
+        A world born without world_events.json / location_map.json /
+        discovery.json therefore has no events, no map and no knowledge record,
+        and every save made from it inherits the same hole.
+        """
+        present = {name for name in os.listdir(self.path) if name.endswith('.json')}
+        missing = sorted(set(schema.CORE_STATE_FILES) - present)
+        self.assertEqual(missing, [], f'world was created without core files: {missing}')
+
+    def test_save_round_trip_preserves_the_full_world_state(self):
+        """A save must capture every core file, and restore must bring it back.
+
+        This is the guarantee a player relies on: what happened is what comes
+        back. It fails if any core file is absent at save time.
+        """
+        storage.write_world_file(str(self.path), 'world_events.json', {'events': [
+            {'event_id': 'raid', 'status': 'pending', 'trigger_conditions': [], 'outcomes': []}
+        ]})
+        storage.write_world_file(str(self.path), 'discovery.json', {'discovered': {'raid': {}}})
+        storage.write_world_file(str(self.path), 'location_map.json', {'locations': [
+            {'id': 'village', 'name': 'Village'}
+        ]})
+
+        save = self.client.post(f'/worlds/{self.world}/saves', json={'label': 'roundtrip'}).json()
+        save_id = save['save']['save_id']
+        snapshot_dir = self.path / 'saves' / save_id
+        captured = {name for name in os.listdir(snapshot_dir) if name.endswith('.json')}
+        missing = sorted(set(schema.CORE_STATE_FILES) - captured)
+        self.assertEqual(missing, [], f'save omitted core files: {missing}')
+
+        # Mutate the live world, then restore and confirm the state came back.
+        self.write('world_events.json', {'events': []})
+        restore = self.client.post(f'/worlds/{self.world}/saves/{save_id}/restore')
+        self.assertEqual(restore.status_code, 200)
+        self.assertEqual(len(self.read('world_events.json')['events']), 1,
+                         'restore must bring back the saved event')
+        self.assertIn('raid', self.read('discovery.json')['discovered'],
+                      'restore must bring back what the world had discovered')
 
     def test_writer_invalid_json_retries_once_with_format_correction(self):
         calls = {'writer': 0}
@@ -626,6 +673,58 @@ class ReliabilityTests(unittest.TestCase):
         self.assertFalse(response.json()['has_api_key'])
         self.assertEqual(storage.get_effective_api_key(), '')
 
+    def test_world_key_stored_under_legacy_api_key_spelling_is_usable(self):
+        """A world override written with the short spelling must not be inert.
+
+        Older builds wrote the world key as "api_key" while the resolver read
+        "openrouter_api_key", so a stored key resolved to nothing and the world
+        silently fell back to the app chain.
+        """
+        override = self.path / 'runtime_override.json'
+        override.write_text(json.dumps({'api_key': self.SENTINEL}), encoding='utf-8')
+        self.assertEqual(storage.get_effective_api_key(self.world), self.SENTINEL)
+        chain = storage.get_effective_fallback_chain(self.world)
+        self.assertEqual([node['api_key'] for node in chain], [self.SENTINEL])
+
+    def test_deleting_world_key_clears_both_spellings(self):
+        """Deleting a world key must not leave a usable key behind.
+
+        The resolver prefers "api_key" over "openrouter_api_key", so clearing
+        only the long spelling kept the "deleted" key in force.
+        """
+        override = self.path / 'runtime_override.json'
+        override.write_text(json.dumps({'api_key': self.SENTINEL,
+                                        'openrouter_api_key': self.SENTINEL}), encoding='utf-8')
+        response = self.client.delete(f'/worlds/{self.world}/runtime-config/api-key')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(storage.get_effective_api_key(self.world), '')
+        self.assertEqual(storage.get_effective_fallback_chain(self.world), [])
+        self.assertEqual(response.json()['has_api_key'], False)
+
+    def test_deleting_world_key_via_put_action_clears_short_spelling(self):
+        override = self.path / 'runtime_override.json'
+        override.write_text(json.dumps({'api_key': self.SENTINEL,
+                                        'openrouter_api_key': self.SENTINEL}), encoding='utf-8')
+        response = self.client.put(f'/worlds/{self.world}/runtime-config',
+                                   json={'api_key_action': 'delete'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(storage.get_effective_api_key(self.world), '')
+        self.assertEqual(storage.get_effective_fallback_chain(self.world), [])
+
+    def test_chain_node_without_key_does_not_shadow_a_usable_key(self):
+        """A keyless node is not a usable node and must not win over a real key.
+
+        A world chain whose node carries no api_key would be sent to the
+        provider without credentials; the resolver must treat the node as
+        absent instead of returning it.
+        """
+        override = self.path / 'runtime_override.json'
+        override.write_text(json.dumps({'fallback_chain': [
+            {'provider': 'custom', 'model': 'x', 'api_key': '', 'base_url': ''}
+        ]}), encoding='utf-8')
+        self.assertEqual(storage.get_effective_fallback_chain(self.world), [])
+        self.assertFalse(storage.has_real_api_key(self.world))
+
     def test_connection_error_message_does_not_leak_key(self):
         self.client.put('/runtime-config', json={'api_key': self.SENTINEL, 'model_name': 'test/model'})
         with patch.object(main.requests, 'post',
@@ -730,6 +829,150 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('newer', response.json()['detail'])
         self.assertFalse((self.data / 'worlds' / 'too_new_world').exists())
+
+    @staticmethod
+    def import_package(**extra):
+        package = {
+            'world_config': {'display_name': 'Importable'},
+            'card_registry': {'cards': []},
+            'canon_timeline': {'checkpoints': []},
+            'character_state': {'characters': {}},
+        }
+        package.update(extra)
+        return package
+
+    def test_import_writes_optional_core_files(self):
+        response = self.client.post('/worlds/import', json={
+            'world_name': 'import_ok',
+            'package_data': self.import_package(
+                world_events={'events': [{'event_id': 'ev_1'}]},
+                location_map={'locations': [{'id': 'loc_1', 'name': 'Hall'}]},
+            ),
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        world = self.data / 'worlds' / 'import_ok'
+        self.assertEqual(self.read_from(world, 'world_events.json')['events'], [{'event_id': 'ev_1'}])
+        self.assertEqual(self.read_from(world, 'location_map.json')['locations'][0]['id'], 'loc_1')
+
+    def test_import_rejects_optional_core_file_with_wrong_collection_type(self):
+        response = self.client.post('/worlds/import', json={
+            'world_name': 'import_bad_events',
+            'package_data': self.import_package(world_events={'events': 'not-a-list'}),
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('world_events.events', response.json()['detail'])
+        # Validation runs before the first write, so no half-created world is left.
+        self.assertFalse((self.data / 'worlds' / 'import_bad_events').exists())
+
+    def test_import_rejects_non_loopback_override_base_url(self):
+        for hostile in (
+            'http://attacker.example/v1',
+            'http://127.0.0.1@attacker.example/v1',
+            'http://notlocalhost.example/v1',
+            'http://attacker.example/18789',
+        ):
+            with self.subTest(base_url=hostile):
+                sanitized = world_routes.sanitize_imported_runtime_override({
+                    'fallback_chain': [{'provider': 'custom', 'model': 'm', 'base_url': hostile}],
+                })
+                self.assertEqual(sanitized.get('fallback_chain', []), [])
+
+    def test_import_keeps_loopback_override_base_url(self):
+        for local in (
+            'http://localhost:11434/v1',
+            'http://127.0.0.1:18789/v1',
+            'http://[::1]:1234/v1',
+        ):
+            with self.subTest(base_url=local):
+                sanitized = world_routes.sanitize_imported_runtime_override({
+                    'fallback_chain': [{'provider': 'custom', 'model': 'm', 'base_url': local}],
+                })
+                chain = sanitized.get('fallback_chain', [])
+                self.assertEqual(len(chain), 1)
+                self.assertEqual(chain[0]['base_url'], local)
+                self.assertEqual(chain[0]['api_key'], '')
+
+    def test_is_loopback_url_rejects_malformed_and_scheme_less_urls(self):
+        # A scheme-less or malformed base_url cannot be posted to anyway, so it
+        # must not be accepted as "local" either.
+        for rejected in ('localhost:11434/v1', 'http://localhost:abc/v1', '', 'file:///etc/passwd'):
+            with self.subTest(url=rejected):
+                self.assertFalse(security.is_loopback_url(rejected))
+
+    def corrupt(self, filename):
+        (self.path / filename).write_text('{ this is not json', encoding='utf-8')
+
+    def test_export_reports_unreadable_file_instead_of_dropping_it(self):
+        self.corrupt('world_events.json')
+        response = self.client.get(f'/worlds/{self.world}/export')
+        self.assertEqual(response.status_code, 200, response.text)
+        pkg = response.json()
+        # The unreadable file is absent, but the package says so rather than
+        # letting the recipient believe the copy is complete.
+        self.assertNotIn('world_events', pkg)
+        self.assertEqual([w['file'] for w in pkg['export_warnings']], ['world_events.json'])
+
+    def test_corrupt_world_file_answers_409_not_500(self):
+        for filename, route in (('character_state.json', f'/worlds/{self.world}'),
+                                ('world_events.json', f'/worlds/{self.world}/journal')):
+            with self.subTest(filename=filename):
+                target = self.path / filename
+                original = target.read_bytes() if target.exists() else None
+                self.corrupt(filename)
+                response = self.client.get(route)
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertIn(filename, response.json()['detail'])
+                if original is None:
+                    target.unlink()
+                else:
+                    target.write_bytes(original)
+
+    def test_affinity_graph_drops_edges_to_unknown_nodes(self):
+        state = self.read('character_state.json')
+        characters = state['characters']
+        known = next(iter(characters))
+        characters[known]['relationships'] = {
+            'char_never_introduced': {'label': 'owes'},
+            known: {'label': 'self'},
+        }
+        self.write('character_state.json', state)
+        self.write('location_map.json', {'locations': [
+            {'id': 'loc_known', 'name': 'Known', 'connected_to': ['loc_never_visited']},
+            {'id': 'loc_never_visited', 'name': 'Unvisited'},
+        ]})
+
+        graph = self.client.get(f'/worlds/{self.world}/affinity-graph').json()
+        node_ids = {node['id'] for node in graph['nodes']}
+        self.assertIn(known, node_ids)
+        self.assertNotIn('char_never_introduced', node_ids)
+        for edge in graph['edges']:
+            self.assertIn(edge['source'], node_ids)
+            self.assertIn(edge['target'], node_ids)
+            self.assertNotEqual(edge['source'], edge['target'])
+        # The location pair that does exist is still reported.
+        self.assertIn({'source': 'loc_known', 'target': 'loc_never_visited', 'label': 'connected'},
+                      graph['edges'])
+
+    def test_map_restrictions_warn_once_when_world_has_no_protagonist(self):
+        location_map = {'locations': [{'id': 'gate', 'name': 'Gate', 'unlock_exp': 50}]}
+        state_changes = {'characters': {'char_xueli': {'location': 'Gate'}}}
+        config = {k: v for k, v in self.cfg.items() if k not in ('protagonist_id', 'main_character_id')}
+
+        map_rules._missing_protagonist_warned = False
+        with self.assertLogs('app.world.map_rules', level='WARNING') as captured:
+            self.assertEqual(check_map_based_restrictions(
+                state_changes, location_map, self.read('character_state.json')['characters'], config), [])
+            # A second call in the same process must not log again.
+            check_map_based_restrictions(
+                state_changes, location_map, self.read('character_state.json')['characters'], config)
+        self.assertEqual(len(captured.records), 1)
+        self.assertIn('protagonist_id', captured.records[0].getMessage())
+
+        # With a protagonist the gate is evaluated again, so the early return
+        # only covers the genuinely unconfigured world.
+        config['main_character_id'] = 'char_xueli'
+        self.assertTrue(check_map_based_restrictions(
+            state_changes, location_map, self.read('character_state.json')['characters'], config))
 
     def test_save_includes_style_card_and_schema_version(self):
         self.client.put(f'/worlds/{self.world}/style-card', json={
@@ -1200,6 +1443,10 @@ class ReliabilityTests(unittest.TestCase):
         import subprocess
         path = str(self.path)
         old_config = (self.path / 'world_config.json').read_bytes()
+        # The world already owns location_map.json, so the rollback must restore
+        # its saved contents rather than delete it. Capture the pre-turn bytes to
+        # prove the interrupted write left nothing behind.
+        old_location_map = (self.path / 'location_map.json').read_bytes()
         updates = {
             'world_config.json': {**self.cfg, 'display_name': 'AFTER_KILL'},
             'location_map.json': {'locations': [{'id': 'new'}]},
@@ -1230,7 +1477,8 @@ class ReliabilityTests(unittest.TestCase):
         result = persistence.recover_world(path)
         self.assertEqual(result, {'recovered': True, 'action': 'rollback'})
         self.assertEqual((self.path / 'world_config.json').read_bytes(), old_config)
-        self.assertFalse((self.path / 'location_map.json').exists())
+        self.assertEqual((self.path / 'location_map.json').read_bytes(), old_location_map,
+                         'rollback must restore the pre-turn map, not the interrupted write')
         self.assertFalse((self.path / '_commit_journal.json').exists())
         self.assertEqual(list(self.path.glob('*.tmp')), [])
 

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+import logging
 import os
 import json
 import re
@@ -6,9 +7,11 @@ import time
 import shutil
 from html import escape as html_escape
 
-from app.storage import WORLDS_DIR, read_world_runtime_override, write_world_runtime_override, require_world, require_world_raw, world_path_of, read_world_file, write_world_file, read_saves_index, write_world_style_card, _validate_world_name, redact_runtime_override_for_export, bump_world_revision, mark_builder_manual
+from app.storage import WORLDS_DIR, WorldFileUnreadable, read_world_runtime_override, write_world_runtime_override, require_world, require_world_raw, world_path_of, read_world_file, write_world_file, read_saves_index, write_world_style_card, _validate_world_name, redact_runtime_override_for_export, bump_world_revision, mark_builder_manual
 from app.engine import TEMPLATES, _validate_imported_package, detect_story_language
 from app.models import WorldConfigUpdate, WorldCreationRequest, ImportWorldRequest, ForkRequest
+from app.security import is_loopback_url
+from app.story.entities import validate_imported_optional_core_files
 from app.world.schema import CORE_STATE_FILES, read_schema_version, SchemaVersionError
 from app.world.templates import SCHEMA_VERSION
 
@@ -18,6 +21,8 @@ except ImportError:
     from backend.skill_limiter import check_skill_limiter
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/health")
@@ -94,9 +99,45 @@ def delete_world(world_name: str):
     return {"message": "World deleted", "world_name": world_name}
 
 
+def sanitize_imported_runtime_override(override: dict) -> dict:
+    if not isinstance(override, dict):
+        return {}
+    sanitized = {
+        "creator_mode_enabled": bool(override.get("creator_mode_enabled", False)),
+        "editor_enabled": bool(override.get("editor_enabled", False)),
+        "enable_extractor_cross_check": bool(override.get("enable_extractor_cross_check", False)),
+        "openrouter_model": str(override.get("openrouter_model") or ""),
+        "openrouter_api_key": "",
+    }
+    if "role_assignments" in override and isinstance(override["role_assignments"], dict):
+        sanitized["role_assignments"] = dict(override["role_assignments"])
+
+    chain = []
+    for entry in override.get("fallback_chain", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        provider = str(entry.get("provider") or "").lower().strip()
+        base_url = str(entry.get("base_url") or "").strip()
+        is_loopback = is_loopback_url(base_url)
+        if base_url and not is_loopback:
+            continue
+        chain.append({
+            "provider": provider,
+            "model": str(entry.get("model") or ""),
+            "api_key": "",
+            "base_url": base_url if is_loopback else "",
+        })
+    if chain:
+        sanitized["fallback_chain"] = chain
+    return sanitized
+
+
 @router.post("/worlds/import")
 def import_world(req: ImportWorldRequest):
     pkg = req.package_data
+    if not isinstance(pkg, dict):
+        raise HTTPException(status_code=400, detail="Invalid package data")
+
     declared_version = pkg.get("schema_version")
     if declared_version is None and isinstance(pkg.get("world_config"), dict):
         declared_version = pkg["world_config"].get("schema_version")
@@ -108,8 +149,13 @@ def import_world(req: ImportWorldRequest):
                 f"(max {SCHEMA_VERSION}). Update Story Engine before importing."
             ),
         )
+
     full_cfg, card_reg, timeline, char_state = _validate_imported_package(pkg, TEMPLATES)
     full_cfg["schema_version"] = SCHEMA_VERSION
+
+    # Validate everything before the first write, so a rejected package never
+    # leaves a half-created world directory behind.
+    optional_core_files = validate_imported_optional_core_files(pkg, TEMPLATES)
 
     raw_name = req.world_name or full_cfg.get("display_name") or "imported_world"
     target_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', raw_name).strip('_') or "imported_world"
@@ -128,12 +174,19 @@ def import_world(req: ImportWorldRequest):
     chapters_data = pkg.get("chapters")
     if not chapters_data or not isinstance(chapters_data, dict):
         chapters_data = {"chapters": [], "running_summary": "", "memorable_beats": []}
-    elif "memorable_beats" not in chapters_data:
-        chapters_data["memorable_beats"] = []
+    else:
+        chapters_data = dict(chapters_data)
+        if "chapters" not in chapters_data or not isinstance(chapters_data["chapters"], list):
+            chapters_data["chapters"] = []
+        if "memorable_beats" not in chapters_data:
+            chapters_data["memorable_beats"] = []
     write_world_file(world_path, "chapters.json", chapters_data)
 
+    for filename, content in optional_core_files.items():
+        write_world_file(world_path, filename, content)
+
     if "runtime_override" in pkg and isinstance(pkg["runtime_override"], dict):
-        write_world_runtime_override(target_name, pkg["runtime_override"])
+        write_world_runtime_override(target_name, sanitize_imported_runtime_override(pkg["runtime_override"]))
 
     if "style_card" in pkg and isinstance(pkg["style_card"], dict):
         write_world_style_card(target_name, pkg["style_card"])
@@ -167,6 +220,23 @@ def create_world(world_name: str, req: WorldCreationRequest = None):
     return {"message": "World created", "world_name": world_name}
 
 
+def _read_optional_export_file(world_path: str, filename: str, warnings: list):
+    """Read an optional world file for export, recording why it was skipped.
+
+    An export doubles as a recovery copy, so a file that exists but cannot be
+    read must not vanish silently: the recipient has to be able to tell that the
+    copy is incomplete. Returns None when the file is absent or unreadable.
+    """
+    if not os.path.isfile(os.path.join(world_path, filename)):
+        return None
+    try:
+        return read_world_file(world_path, filename)
+    except WorldFileUnreadable as error:
+        logger.warning("Export of %s skipped %s: %s", world_path, filename, error.reason)
+        warnings.append({"file": filename, "reason": error.reason})
+        return None
+
+
 @router.get("/worlds/{world_name}/export")
 def export_world(world_name: str):
     # Raw read: export must work even for a world we cannot migrate, so it can be
@@ -183,20 +253,21 @@ def export_world(world_name: str):
         "world_config": read_world_file(world_path, "world_config.json"),
         "card_registry": read_world_file(world_path, "card_registry.json"),
         "canon_timeline": read_world_file(world_path, "canon_timeline.json"),
-        "character_state": read_world_file(world_path, "character_state.json")
+        "character_state": read_world_file(world_path, "character_state.json"),
+        "chapters": read_world_file(world_path, "chapters.json"),
     }
+
+    export_warnings = []
+    for filename in ("world_events.json", "location_map.json", "style_card.json"):
+        content = _read_optional_export_file(world_path, filename, export_warnings)
+        if content is not None:
+            pkg[filename[: -len(".json")]] = content
+    if export_warnings:
+        pkg["export_warnings"] = export_warnings
 
     override = read_world_runtime_override(world_name)
     if override:
         pkg["runtime_override"] = redact_runtime_override_for_export(override)
-
-    style_card_path = os.path.join(world_path, "style_card.json")
-    if os.path.isfile(style_card_path):
-        try:
-            with open(style_card_path, "r", encoding="utf-8") as f:
-                pkg["style_card"] = json.load(f)
-        except Exception:
-            pass
 
     return pkg
 
@@ -210,8 +281,11 @@ def fork_timeline_at_checkpoint(world_name: str, req: ForkRequest):
     if os.path.exists(dest_path):
         raise HTTPException(status_code=400, detail="New world name already exists.")
 
-    import shutil
-    shutil.copytree(src_path, dest_path)
+    shutil.copytree(
+        src_path,
+        dest_path,
+        ignore=shutil.ignore_patterns("runtime_override.json", "_commit_journal.json*", "*.tmp")
+    )
 
     chapters_data = read_world_file(dest_path, "chapters.json")
     chapters = chapters_data.get("chapters", [])
@@ -262,10 +336,3 @@ def export_story_html(world_name: str):
     html_content += "</body></html>"
     from fastapi.responses import HTMLResponse
     return HTMLResponse(content=html_content)
-
-from app.routes.runtime_routes import router as runtime_routes_router
-router.include_router(runtime_routes_router)
-from app.routes.discovery_routes import router as discovery_routes_router
-router.include_router(discovery_routes_router)
-from app.routes.demo_routes import router as demo_routes_router
-router.include_router(demo_routes_router)

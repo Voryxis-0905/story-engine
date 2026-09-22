@@ -4,6 +4,7 @@ import os
 
 from app.storage import world_path_of, write_world_file, _validate_world_name
 from app.engine import DEFAULT_STORY_CLOCK, make_card, make_checkpoint, make_character
+from app.world.schema import CORE_STATE_FILES
 from app.world.templates import SCHEMA_VERSION
 
 try:
@@ -165,6 +166,18 @@ def seed_demo(world_name: str, overwrite: bool = False):
     write_world_file(world_path, "canon_timeline.json", {"checkpoints": checkpoints})
     write_world_file(world_path, "character_state.json", {"characters": characters})
     write_world_file(world_path, "chapters.json", {"chapters": [], "running_summary": "", "memorable_beats": []})
+
+    # Every other world-owned core file must exist from the first turn. Leaving
+    # them absent is not free: snapshots copy only files that exist, so a world
+    # born without world_events.json / location_map.json / discovery.json
+    # silently has no events, no map and no knowledge record, and every save,
+    # branch and restore made from it inherits the same hole.
+    written = {"world_config.json", "card_registry.json", "canon_timeline.json",
+               "character_state.json", "chapters.json"}
+    for filename, template in CORE_STATE_FILES.items():
+        if filename in written:
+            continue
+        write_world_file(world_path, filename, template)
 
     return {
         "message": "Seed demo done",

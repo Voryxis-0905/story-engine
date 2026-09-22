@@ -1015,4 +1015,3 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     commit_world_files(world_path, updates)
 
     return response
-    return response

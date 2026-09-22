@@ -4,6 +4,11 @@ from app.llm_client import call_llm
 from app.llm_client import parse_llm_json
 from app.prompts import LOCATION_MAP_GENERATOR_PROMPT
 import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+_missing_protagonist_warned = False
 
 
 def reconcile_checkpoint_location_gates(location_map: dict, checkpoints: list,
@@ -137,10 +142,23 @@ def check_map_based_restrictions(state_changes: dict, location_map: dict,
     completed_checkpoints = set(world_config.get("completed_checkpoints", []) or [])
     current_cp_id = world_config.get("current_checkpoint_id", "")
 
+    # Map progression gates describe the player's access, so only the protagonist
+    # is checked: NPCs need no protagonist EXP to attend events.
+    protagonist_id = world_config.get("protagonist_id") or world_config.get("main_character_id", "")
+    if not protagonist_id:
+        # Without a protagonist every character would be skipped, silently
+        # disabling every gate. Say so once instead of appearing to check.
+        global _missing_protagonist_warned
+        if not _missing_protagonist_warned:
+            _missing_protagonist_warned = True
+            logger.warning(
+                "world_config has neither 'protagonist_id' nor 'main_character_id'; "
+                "map progression restrictions cannot be evaluated and are skipped."
+            )
+        return []
+
     for char_id, changes in state_changes.get("characters", {}).items():
-        # Map progression gates describe the player's access, not where an
-        # NPC may be present. NPCs need no protagonist EXP to attend events.
-        if char_id != world_config.get("protagonist_id"):
+        if char_id != protagonist_id:
             continue
         loc = changes.get("location")
         if not loc:

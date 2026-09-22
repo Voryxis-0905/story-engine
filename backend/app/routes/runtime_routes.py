@@ -161,10 +161,14 @@ def update_world_runtime_config(world_name: str, req: RuntimeConfigUpdate):
     raw_key = req.api_key if req.api_key is not None else req.openrouter_api_key
     if key_action == "delete":
         cfg["openrouter_api_key"] = ""
+        # read_world_runtime_override prefers "api_key"; clearing only the long
+        # spelling would leave the world key in force after a "delete" request.
+        cfg["api_key"] = ""
         cfg["fallback_chain"] = []
     elif key_action == "replace":
         new_key = (raw_key or "").strip()
         cfg["openrouter_api_key"] = new_key
+        cfg["api_key"] = new_key
         # A world-owned single-node chain must not shadow the freshly stored key.
         cfg["fallback_chain"] = _sync_single_chain_node(cfg.get("fallback_chain"), api_key=new_key)
     if req.openrouter_model is not None:
@@ -200,6 +204,10 @@ def clear_world_runtime_api_key(world_name: str):
     require_world(world_name)
     cfg = read_world_runtime_override(world_name)
     cfg["openrouter_api_key"] = ""
+    # read_world_runtime_override mirrors the app config helper: it prefers
+    # "api_key" over "openrouter_api_key" when resolving the effective key, so
+    # leaving "api_key" behind would keep a "deleted" world key usable.
+    cfg["api_key"] = ""
     cfg["fallback_chain"] = []
     write_world_runtime_override(world_name, cfg)
     return build_runtime_config_status(world_name)

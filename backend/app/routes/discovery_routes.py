@@ -204,3 +204,76 @@ def get_journal(world_name: str):
         save_discoveries(world_path, store)
     entries = sorted(quest_view(events, store), key=lambda q: q.get("discovered_at_tick") or 0, reverse=True)
     return {"entries": entries}
+
+
+@router.get("/worlds/{world_name}/affinity-graph")
+def get_affinity_graph(world_name: str):
+    world_path = require_world(world_name)
+    try:
+        character_state = read_world_file(world_path, "character_state.json")
+    except FileNotFoundError:
+        character_state = {"characters": {}}
+
+    characters = character_state.get("characters", {}) if isinstance(character_state, dict) else {}
+    nodes = []
+    edges = []
+    seen_nodes = set()
+
+    for cid, cdata in characters.items():
+        if not isinstance(cdata, dict):
+            continue
+        seen_nodes.add(cid)
+        nodes.append({
+            "id": cid,
+            "label": cdata.get("name") or cid,
+            "type": "character",
+        })
+        relationships = cdata.get("relationships", {})
+        if isinstance(relationships, dict):
+            for target_id, rel in relationships.items():
+                label = ""
+                if isinstance(rel, dict):
+                    label = str(rel.get("label") or rel.get("dynamic") or rel.get("affinity") or "knows")
+                elif rel is not None:
+                    label = str(rel)
+                edges.append({
+                    "source": cid,
+                    "target": target_id,
+                    "label": label or "knows",
+                })
+
+    try:
+        location_map = read_world_file(world_path, "location_map.json")
+    except FileNotFoundError:
+        location_map = {}
+
+    if isinstance(location_map, dict):
+        for loc in location_map.get("locations", []) or []:
+            if not isinstance(loc, dict):
+                continue
+            lid = loc.get("id") or loc.get("name")
+            if not lid or lid in seen_nodes:
+                continue
+            seen_nodes.add(lid)
+            nodes.append({
+                "id": lid,
+                "label": loc.get("name") or lid,
+                "type": "location",
+            })
+            for connected in loc.get("connected_to", []) or []:
+                edges.append({
+                    "source": lid,
+                    "target": connected,
+                    "label": "connected",
+                })
+
+    # Relationships and connected_to may name characters or locations that are
+    # not in the world state yet (an NPC who has not appeared, a route to a place
+    # never entered). A graph edge needs both ends to exist, so drop the dangling
+    # ones rather than handing the renderer an edge it cannot draw.
+    edges = [
+        edge for edge in edges
+        if edge["target"] in seen_nodes and edge["source"] != edge["target"]
+    ]
+
+    return {"nodes": nodes, "edges": edges}

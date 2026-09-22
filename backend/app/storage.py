@@ -31,6 +31,20 @@ DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
 _VALID_ROLES = frozenset({"planner", "writer", "extractor", "editor", "checker", "summarizer"})
 
 
+class WorldFileUnreadable(Exception):
+    """A world state file is present but cannot be used as world state.
+
+    Distinct from ``FileNotFoundError`` (the file is simply absent): this one
+    means the world's own data is corrupt, so the request cannot be served until
+    it is restored from a save or a backup.
+    """
+
+    def __init__(self, filename: str, reason: str):
+        super().__init__(f"{filename} could not be read: {reason}")
+        self.filename = filename
+        self.reason = reason
+
+
 def read_runtime_config() -> dict:
     import sys
     main_mod = sys.modules.get("main")
@@ -86,8 +100,14 @@ def read_world_runtime_override(world_name: str) -> dict:
         return {"openrouter_api_key": "", "openrouter_model": ""}
     if not isinstance(data, dict):
         return {"openrouter_api_key": "", "openrouter_model": ""}
+    # An override file written by an older build (or by hand) may carry the key
+    # under "api_key" only. Mirror the app-config helper: resolve whichever of
+    # the two holds the key so a stored key is never silently unusable, and so
+    # clearing one spelling cannot leave the other behind.
+    world_key = data.get("api_key") or data.get("openrouter_api_key", "") or ""
     return {
-        "openrouter_api_key": data.get("openrouter_api_key", "") or "",
+        "openrouter_api_key": world_key,
+        "api_key": world_key,
         "openrouter_model": data.get("openrouter_model", "") or "",
         "fallback_chain": data.get("fallback_chain", []),
         "creator_mode_enabled": data.get("creator_mode_enabled", False),
@@ -135,7 +155,17 @@ def get_effective_fallback_chain(world_name: str = None) -> list:
     if world_name:
         world_cfg = read_world_runtime_override(world_name)
         if world_cfg.get("fallback_chain"):
-            return world_cfg["fallback_chain"]
+            # A world chain node with no key of its own is not a usable node: an
+            # empty api_key would be sent to the provider. Skip such nodes so the
+            # world falls through to the app config instead of failing the call.
+            usable = [
+                node for node in world_cfg["fallback_chain"]
+                if isinstance(node, dict) and str(node.get("api_key", "")).strip()
+            ]
+            if usable:
+                return usable
+        # read_world_runtime_override normalises both spellings into
+        # "openrouter_api_key", so this covers a world key stored either way.
         if world_cfg.get("openrouter_api_key"):
             return [{
                 "provider": app_cfg.get("llm_provider", "openrouter"),
@@ -144,7 +174,13 @@ def get_effective_fallback_chain(world_name: str = None) -> list:
                 "base_url": app_cfg.get("base_url", ""),
             }]
     if app_cfg.get("fallback_chain"):
-        return app_cfg["fallback_chain"]
+        # Same rule for the app chain: a node without a key is not a usable node.
+        usable = [
+            node for node in app_cfg["fallback_chain"]
+            if isinstance(node, dict) and str(node.get("api_key", "")).strip()
+        ]
+        if usable:
+            return usable
     api_key = get_effective_api_key(world_name)
     model = get_effective_model(world_name)
     provider = app_cfg.get("llm_provider", "openrouter")
@@ -295,8 +331,9 @@ def redact_runtime_override_for_export(override: dict) -> dict:
     """
     if not isinstance(override, dict):
         return {}
-    redacted = {k: v for k, v in override.items() if k not in ("openrouter_api_key", "openrouter_model")}
+    redacted = {k: v for k, v in override.items() if k not in ("openrouter_api_key", "api_key")}
     redacted["openrouter_api_key"] = ""
+    redacted["api_key"] = ""
     if isinstance(override.get("openrouter_model"), str):
         redacted["openrouter_model"] = override["openrouter_model"]
     chain = override.get("fallback_chain")
@@ -431,9 +468,26 @@ def write_world_file(world_path: str, filename: str, data: dict):
 
 
 def read_world_file(world_path: str, filename: str) -> dict:
+    """Read a world state file, distinguishing "absent" from "unreadable".
+
+    ``FileNotFoundError`` still propagates, because callers use it to mean the
+    file is simply not there yet. Anything else — broken JSON, a directory in
+    place of a file, an unexpected top-level type — becomes ``WorldFileUnreadable``
+    so the API can answer with an actionable error instead of a bare 500.
+    """
     file_path = os.path.join(world_path, filename)
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as error:
+        logger.error("Unreadable world file %s: %s", file_path, error)
+        raise WorldFileUnreadable(filename, str(error)) from error
+    if not isinstance(data, dict):
+        logger.error("World file %s holds %s, expected an object", file_path, type(data).__name__)
+        raise WorldFileUnreadable(filename, f"expected a JSON object, found {type(data).__name__}")
+    return data
 
 
 def _validate_world_name(world_name: str):
