@@ -937,7 +937,9 @@ class ReliabilityTests(unittest.TestCase):
         }
         self.write('character_state.json', state)
         self.write('location_map.json', {'locations': [
-            {'id': 'loc_known', 'name': 'Known', 'connected_to': ['loc_never_visited']},
+            {'id': 'loc_known', 'name': 'Known', 'connected_to': [
+                {'to': 'loc_never_visited', 'travel_time_minutes': 90},
+            ]},
             {'id': 'loc_never_visited', 'name': 'Unvisited'},
         ]})
 

@@ -261,6 +261,14 @@ def get_affinity_graph(world_name: str):
                 "type": "location",
             })
             for connected in loc.get("connected_to", []) or []:
+                if isinstance(connected, dict):
+                    connected = (
+                        connected.get("to")
+                        or connected.get("location_id")
+                        or connected.get("id")
+                    )
+                if not isinstance(connected, str) or not connected:
+                    continue
                 edges.append({
                     "source": lid,
                     "target": connected,
