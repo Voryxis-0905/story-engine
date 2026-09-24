@@ -70,6 +70,15 @@ export interface TravelPreview {
   risk?: { level: string; known_tags: string[] };
   requirements_missing?: Array<Record<string, unknown>>;
   reason?: string;
+  /**
+   * The engine withheld this route's shape because it crosses unexplored
+   * ground. When true, `route`/`legs` are empty on purpose and must be read as
+   * "unknown", not as "no stops": rendering an empty route as a direct line
+   * would invent a shortcut the engine never promised.
+   */
+  route_redacted?: boolean;
+  /** Player-facing sentence for a redacted route, authored by the engine. */
+  route_note?: string;
 }
 
 export interface InventoryItem {

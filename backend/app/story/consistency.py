@@ -135,9 +135,9 @@ def parse_checker_response(raw_text: str) -> dict:
     try:
         parsed = parse_llm_json(raw_text)
     except (json.JSONDecodeError, ValueError) as error:
-        return _unavailable(f"[CHECKER TRẢ VỀ KHÔNG ĐỌC ĐƯỢC — coi như chưa kiểm tra] {error}")
+        return _unavailable(f"[CHECKER RESPONSE COULD NOT BE READ — treated as unchecked] {error}")
     if not isinstance(parsed, dict):
-        return _unavailable("[CHECKER TRẢ VỀ KHÔNG ĐÚNG ĐỊNH DẠNG — coi như chưa kiểm tra]")
+        return _unavailable("[CHECKER RESPONSE HAS AN INVALID FORMAT — treated as unchecked]")
 
     consistent = parsed.get("consistent")
     severity = parsed.get("severity")
@@ -147,24 +147,24 @@ def parse_checker_response(raw_text: str) -> dict:
 
     problems = []
     if not isinstance(consistent, bool):
-        problems.append("'consistent' phải là boolean")
+        problems.append("'consistent' must be a boolean")
     if severity not in _CHECKER_SEVERITIES:
-        problems.append(f"'severity' phải thuộc {_CHECKER_SEVERITIES}")
+        problems.append(f"'severity' must be one of {_CHECKER_SEVERITIES}")
     if not isinstance(issues, list) or any(not isinstance(item, (str, dict)) for item in issues):
-        problems.append("'issues' phải là danh sách chuỗi/đối tượng")
+        problems.append("'issues' must be a list of strings or objects")
     if not isinstance(state_sync, bool):
-        problems.append("'state_sync' phải là boolean nếu được trả về")
+        problems.append("'state_sync' must be a boolean when provided")
     if not isinstance(action_scope, bool):
-        problems.append("'action_scope' phải là boolean nếu được trả về")
+        problems.append("'action_scope' must be a boolean when provided")
     if not problems:
         if severity == "major" and consistent is True:
-            problems.append("'severity'=major nhưng 'consistent'=true")
+            problems.append("'severity'=major but 'consistent'=true")
         if severity in ("none", "minor") and consistent is False:
-            problems.append(f"'severity'={severity} nhưng 'consistent'=false")
+            problems.append(f"'severity'={severity} but 'consistent'=false")
 
     if problems:
         return _unavailable(
-            "[CHECKER TRẢ VỀ SAI SCHEMA — coi như chưa kiểm tra] " + "; ".join(problems)
+            "[CHECKER RESPONSE HAS AN INVALID SCHEMA — treated as unchecked] " + "; ".join(problems)
         )
 
     failed = severity == "major" or consistent is False or state_sync is False or action_scope is False
@@ -201,7 +201,7 @@ def run_consistency_checker(chapter_text: str, state_changes: dict, world_config
             "consistent": None,
             "severity": "none",
             "issues": [],
-            "explanation": f"[CHECKER KHÔNG CHẠY ĐƯỢC — chưa kiểm tra] {e}"
+            "explanation": f"[CHECKER COULD NOT RUN — unchecked] {e}"
         }
     return parse_checker_response(raw)
 

@@ -67,6 +67,21 @@ function render(world = 'WorldA') {
 }
 
 describe('usePlaySession input/retry loop', () => {
+  it('starts Chapter 1 when a confirmed prelude already advanced the checkpoint', async () => {
+    api.play.state.mockResolvedValue(playState({
+      prelude_confirmed: true,
+      arc_progress: { current_checkpoint_id: 'cp_1', current_index: 1, total_checkpoints: 5, completed: ['cp_0'] },
+    }));
+    api.play.getChapters.mockResolvedValue([chapter({ chapter_index: 0, chapter_text: 'Prelude', checkpoint_id: 'cp_0' })]);
+    const { result } = render();
+    await waitFor(() => expect(result.current.playState?.prelude_confirmed).toBe(true));
+
+    await act(async () => { await result.current.handleStartChapter(); });
+
+    expect(api.play.start).toHaveBeenCalledWith('WorldA', { opening_mode: 'ai_generate' });
+    expect(result.current.turns).toHaveLength(1);
+  });
+
   it('previews and executes a time skip without overwriting typed action text', async () => {
     const { result } = render();
     await waitFor(() => expect(api.play.state).toHaveBeenCalled());
@@ -314,6 +329,141 @@ describe('usePlaySession request ids', () => {
     const newId = api.play.continue.mock.calls[2][2].requestId;
     expect(newId).toBeTruthy();
     expect(newId).not.toBe(firstId);
+  });
+});
+
+describe('usePlaySession stale travel previews', () => {
+  // The route drawn on the map and the "Travel here" button are both derived
+  // from `travelPreview`. A result that no longer describes the destination the
+  // player is looking at — or that was computed from older world state — must
+  // never be rendered, and must never be able to reinstall itself later.
+  const preview = (dest: string, minutes: number) => ({
+    status: 'available', destination: dest, route: ['Sect', dest], legs: [],
+    elapsed_minutes: minutes, estimated_ticks: 1, risk: { level: 'low', known_tags: [] },
+  });
+
+  const settled = async (result: { current: ReturnType<typeof usePlaySession> }) => {
+    // Echo the requested destination, like the engine does.
+    api.map.previewTravel.mockImplementation(async (_w: string, dest: string) => preview(dest, 90));
+    await waitFor(() => expect(api.map.status).toHaveBeenCalled());
+    return result;
+  };
+
+  it('invalidate the old route immediately when re-requesting the SAME destination', async () => {
+    const { result } = renderHook(() => usePlaySession('W'));
+    await settled(result);
+
+    await act(async () => { await result.current.handlePreviewTravel({ name: 'Old Forest' }); });
+    expect(result.current.travelPreview?.elapsed_minutes).toBe(90);
+
+    // Second request for the SAME destination, deliberately held open. The
+    // first answer was computed from older state, so it is already worthless.
+    let release: (v: any) => void = () => {};
+    api.map.previewTravel.mockImplementationOnce(() => new Promise(r => { release = r; }));
+    act(() => { result.current.handlePreviewTravel({ name: 'Old Forest' }); });
+
+    expect(result.current.travelPreview, 'stale preview still shown while re-requesting the same destination').toBeNull();
+    expect(result.current.previewLoading).toBe(true);
+
+    await act(async () => { release(preview('Old Forest', 99)); });
+    expect(result.current.travelPreview?.elapsed_minutes).toBe(99);
+    expect(result.current.previewLoading).toBe(false);
+  });
+
+  it('ignores an out-of-order (older) response that lands after a newer one', async () => {
+    const { result } = renderHook(() => usePlaySession('W'));
+    await settled(result);
+
+    let releaseOld: (v: any) => void = () => {};
+    api.map.previewTravel.mockImplementationOnce(() => new Promise(r => { releaseOld = r; }));
+    act(() => { result.current.handlePreviewTravel({ name: 'Old Forest' }); });
+
+    await act(async () => { await result.current.handlePreviewTravel({ name: 'Sky Peak' }); });
+    expect(result.current.travelPreview?.destination).toBe('Sky Peak');
+
+    // The abandoned request finally answers. It must not overwrite the route to
+    // the place the player is actually looking at.
+    await act(async () => { releaseOld(preview('Old Forest', 5)); });
+    expect(result.current.travelPreview?.destination, 'a stale response overwrote the newer one').toBe('Sky Peak');
+  });
+
+  it('lets a stale failure neither clear the live preview nor raise an error', async () => {
+    const { result } = renderHook(() => usePlaySession('W'));
+    await settled(result);
+
+    let rejectOld: (e: any) => void = () => {};
+    api.map.previewTravel.mockImplementationOnce(() => new Promise((_r, rej) => { rejectOld = rej; }));
+    act(() => { result.current.handlePreviewTravel({ name: 'Old Forest' }); });
+
+    await act(async () => { await result.current.handlePreviewTravel({ name: 'Sky Peak' }); });
+    expect(result.current.travelPreview?.destination).toBe('Sky Peak');
+
+    await act(async () => { rejectOld(new Error('old failure')); });
+    expect(result.current.travelPreview?.destination, 'a stale failure cleared the live preview').toBe('Sky Peak');
+    expect(result.current.error).toBeNull();
+    expect(result.current.previewLoading, 'a stale response cleared the in-flight spinner').toBe(false);
+  });
+
+  it('keeps the newest request loading while an older one is still pending', async () => {
+    const { result } = renderHook(() => usePlaySession('W'));
+    await settled(result);
+
+    let releaseOld: (v: any) => void = () => {};
+    api.map.previewTravel.mockImplementationOnce(() => new Promise(r => { releaseOld = r; }));
+    act(() => { result.current.handlePreviewTravel({ name: 'Old Forest' }); });
+
+    let releaseNew: (v: any) => void = () => {};
+    api.map.previewTravel.mockImplementationOnce(() => new Promise(r => { releaseNew = r; }));
+    act(() => { result.current.handlePreviewTravel({ name: 'Sky Peak' }); });
+
+    // The abandoned request settles first; it must not report "not loading" for
+    // the request that is still in flight.
+    await act(async () => { releaseOld(preview('Old Forest', 5)); });
+    expect(result.current.previewLoading, 'stale response hid the spinner for a live request').toBe(true);
+    expect(result.current.travelPreview).toBeNull();
+
+    await act(async () => { releaseNew(preview('Sky Peak', 12)); });
+    expect(result.current.travelPreview?.destination).toBe('Sky Peak');
+    expect(result.current.previewLoading).toBe(false);
+  });
+
+  it('rejects a response that names a different destination than the one requested', async () => {
+    const { result } = renderHook(() => usePlaySession('W'));
+    await settled(result);
+
+    // Defence in depth: the engine echoes the destination back. If it does not
+    // match what we asked for, the payload is not ours to trust.
+    api.map.previewTravel.mockResolvedValueOnce(preview('Somewhere Else', 42));
+    await act(async () => { await result.current.handlePreviewTravel({ name: 'Sky Peak' }); });
+
+    expect(result.current.travelPreview, 'a mismatched-destination payload was installed').toBeNull();
+    expect(result.current.previewLoading).toBe(false);
+  });
+
+  it('discards a preview from the previous world when the world changes', async () => {
+    const { result, rerender } = renderHook(({ w }) => usePlaySession(w), { initialProps: { w: 'W1' } });
+    await settled(result);
+
+    let release: (v: any) => void = () => {};
+    api.map.previewTravel.mockImplementationOnce(() => new Promise(r => { release = r; }));
+    act(() => { result.current.handlePreviewTravel({ name: 'Old Forest' }); });
+
+    rerender({ w: 'W2' });
+    await act(async () => { release(preview('Old Forest', 90)); });
+
+    expect(result.current.travelPreview, "the previous world's preview leaked into the new world").toBeNull();
+    expect(result.current.previewLoading).toBe(false);
+  });
+
+  it('clears the route when travel is actually committed', async () => {
+    const { result } = renderHook(() => usePlaySession('W'));
+    await settled(result);
+
+    await act(async () => { await result.current.handlePreviewTravel({ name: 'Old Forest' }); });
+    expect(result.current.travelPreview).not.toBeNull();
+
+    act(() => { result.current.handleTravelTo({ name: 'Old Forest' }); });
+    expect(result.current.travelPreview, 'the checked route survived committing the journey').toBeNull();
   });
 });
 

@@ -1,13 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronLeftIcon, ChevronDownIcon, CheckCircleIcon, KeyIcon, CpuChipIcon, AdjustmentsHorizontalIcon, ArrowPathIcon, ShieldCheckIcon, UserIcon, Squares2X2Icon, ChatBubbleLeftRightIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
+import { ChevronLeftIcon, CheckCircleIcon, KeyIcon, CpuChipIcon, AdjustmentsHorizontalIcon, ArrowPathIcon, ShieldCheckIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { api } from '../api/client';
-
-type SettingSection = 'card' | 'module' | 'scenes' | 'models' | null;
 
 export const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
-  const [activeSection, setActiveSection] = useState<SettingSection>(null);
 
   // Form states
   const [provider, setProvider] = useState('openrouter');
@@ -131,65 +128,20 @@ export const SettingsPage: React.FC = () => {
         </button>
       </div>
 
-      {/* List of Settings Category Cards */}
-      <div className="space-y-5">
-        {/* Card 1: Character Cards */}
-        <div
-          onClick={() => setActiveSection(activeSection === 'card' ? null : 'card')}
-          className={`story-card p-7 md:p-8 rounded-3xl cursor-pointer relative overflow-hidden transition-all group ${
-            activeSection === 'card' ? 'border-2 border-[var(--periwinkle)] bg-[var(--bg-surface)] shadow-lg' : 'border border-[var(--line)] bg-[var(--bg-surface)] hover:border-[var(--line-2)] hover:shadow-md'
-          }`}
-        >
-          <div className="flex items-center justify-between relative z-10">
+      <div className="max-w-4xl">
+        <div className="story-card p-7 md:p-8 rounded-3xl border border-[var(--line)] bg-[var(--bg-surface)]">
+          <div className="flex items-center justify-between">
             <div className="space-y-1.5">
-              <h3 className="text-xl font-bold text-[var(--ink-main)] font-[var(--font-display)] flex items-center gap-3">
-                <span>Character Cards</span>
-                <ChevronDownIcon className={`w-5 h-5 text-[var(--ink-soft)] transition-transform duration-300 ${activeSection === 'card' ? 'rotate-180 text-[var(--periwinkle-dark)]' : ''}`} />
-              </h3>
-              <p className="text-sm text-[var(--ink-soft)] font-medium">Use character presets & Persona prompt</p>
-            </div>
-            <span className="px-3.5 py-1 rounded-full text-xs font-mono font-bold bg-[rgba(var(--sakura-rgb),0.15)] text-[var(--sakura-dark)] border border-[var(--sakura)]">
-              Active Preset
-            </span>
-          </div>
-          <UserIcon className="w-28 h-28 text-[var(--sakura)] opacity-10 absolute -right-4 -bottom-6 pointer-events-none group-hover:scale-105 transition-transform duration-500" />
-          
-          {activeSection === 'card' && (
-            <div className="mt-6 pt-6 border-t border-[var(--line)] space-y-4 animate-fade-in relative z-10">
-              <p className="font-semibold text-[var(--periwinkle-dark)] font-[var(--font-display)] text-sm">Active Character Preset:</p>
-              <div className="p-5 rounded-2xl bg-[var(--bg-subtle)] border border-[var(--line-2)] font-mono text-[13px] text-[var(--ink-soft)] font-medium shadow-inner">
-                Name: <span className="text-[var(--ink-main)] font-bold">Lin Feng (Dragon Sovereign)</span> • System Prompt: Sonder Engine Deterministic Narrative Mode
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Card 2: Modules (LLM Provider & Credentials) */}
-        <div
-          className={`story-card p-7 md:p-8 rounded-3xl relative overflow-hidden transition-all group ${
-            activeSection === 'module' ? 'border-2 border-[var(--periwinkle)] bg-[var(--bg-surface)] shadow-lg' : 'border border-[var(--line)] bg-[var(--bg-surface)] hover:border-[var(--line-2)] hover:shadow-md'
-          }`}
-        >
-          <div
-            onClick={() => setActiveSection(activeSection === 'module' ? null : 'module')}
-            className="flex items-center justify-between cursor-pointer relative z-10"
-          >
-            <div className="space-y-1.5">
-              <h3 className="text-xl font-bold text-[var(--ink-main)] font-[var(--font-display)] flex items-center gap-3">
-                <span>Modules</span>
-                <ChevronDownIcon className={`w-5 h-5 text-[var(--ink-soft)] transition-transform duration-300 ${activeSection === 'module' ? 'rotate-180 text-[var(--periwinkle-dark)]' : ''}`} />
-              </h3>
-              <p className="text-sm text-[var(--ink-soft)] font-medium">Cognition, vision, speech synthesis, API Keys, etc.</p>
+              <h3 className="text-xl font-bold text-[var(--ink-main)] font-[var(--font-display)]">AI Connection</h3>
+              <p className="text-sm text-[var(--ink-soft)] font-medium">Choose the model and manage its connection.</p>
             </div>
           </div>
-          <Squares2X2Icon className="w-32 h-32 text-[var(--periwinkle)] opacity-10 absolute -right-4 -bottom-6 pointer-events-none group-hover:scale-105 transition-transform duration-500" />
 
-          {activeSection === 'module' && (
-            <form onSubmit={handleSave} className="mt-6 pt-6 border-t border-[var(--line)] space-y-6 animate-fade-in relative z-10">
+            <form onSubmit={handleSave} className="mt-6 pt-6 border-t border-[var(--line)] space-y-6">
               {saveSuccess && (
                 <div className="p-4 rounded-2xl bg-[rgba(var(--ok-rgb),0.1)] border border-[rgba(var(--ok-rgb),0.3)] text-[var(--ok)] text-sm font-medium flex items-center gap-2 shadow-sm">
                   <CheckCircleIcon className="w-5 h-5" />
-                  <span>Module configuration saved successfully!</span>
+                  <span>AI connection saved successfully!</span>
                 </div>
               )}
 
@@ -321,63 +273,6 @@ export const SettingsPage: React.FC = () => {
                 </div>
               )}
             </form>
-          )}
-        </div>
-
-        {/* Card 3: Scenes */}
-        <div
-          onClick={() => setActiveSection(activeSection === 'scenes' ? null : 'scenes')}
-          className={`story-card p-7 md:p-8 rounded-3xl cursor-pointer relative overflow-hidden transition-all group ${
-            activeSection === 'scenes' ? 'border-2 border-[var(--periwinkle)] bg-[var(--bg-surface)] shadow-lg' : 'border border-[var(--line)] bg-[var(--bg-surface)] hover:border-[var(--line-2)] hover:shadow-md'
-          }`}
-        >
-          <div className="flex items-center justify-between relative z-10">
-            <div className="space-y-1.5">
-              <h3 className="text-xl font-bold text-[var(--ink-main)] font-[var(--font-display)] flex items-center gap-3">
-                <span>Scenes</span>
-                <ChevronDownIcon className={`w-5 h-5 text-[var(--ink-soft)] transition-transform duration-300 ${activeSection === 'scenes' ? 'rotate-180 text-[var(--periwinkle-dark)]' : ''}`} />
-              </h3>
-              <p className="text-sm text-[var(--ink-soft)] font-medium">Customize the virtual environment for your characters.</p>
-            </div>
-          </div>
-          <ChatBubbleLeftRightIcon className="w-28 h-28 text-[var(--gold)] opacity-10 absolute -right-4 -bottom-6 pointer-events-none group-hover:scale-105 transition-transform duration-500" />
-          
-          {activeSection === 'scenes' && (
-            <div className="mt-6 pt-6 border-t border-[var(--line)] space-y-4 animate-fade-in relative z-10">
-              <p className="font-semibold text-[var(--periwinkle-dark)] font-[var(--font-display)] text-sm">Spatial Map & Boundary Check:</p>
-              <div className="p-5 rounded-2xl bg-[var(--bg-subtle)] border border-[var(--line-2)] text-[13px] text-[var(--ink-soft)] font-medium shadow-inner">
-                Normalized coordinates (0-100), Fog of war rendering, Zone prefix matching.
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Card 4: Engine Models */}
-        <div
-          onClick={() => setActiveSection(activeSection === 'models' ? null : 'models')}
-          className={`story-card p-7 md:p-8 rounded-3xl cursor-pointer relative overflow-hidden transition-all group ${
-            activeSection === 'models' ? 'border-2 border-[var(--periwinkle)] bg-[var(--bg-surface)] shadow-lg' : 'border border-[var(--line)] bg-[var(--bg-surface)] hover:border-[var(--line-2)] hover:shadow-md'
-          }`}
-        >
-          <div className="flex items-center justify-between relative z-10">
-            <div className="space-y-1.5">
-              <h3 className="text-xl font-bold text-[var(--ink-main)] font-[var(--font-display)] flex items-center gap-3">
-                <span>Engine Models</span>
-                <ChevronDownIcon className={`w-5 h-5 text-[var(--ink-soft)] transition-transform duration-300 ${activeSection === 'models' ? 'rotate-180 text-[var(--periwinkle-dark)]' : ''}`} />
-              </h3>
-              <p className="text-sm text-[var(--ink-soft)] font-medium">Live2D, VRM, Spine, MMD, Sonder Engine Psychology, etc.</p>
-            </div>
-          </div>
-          <CpuChipIcon className="w-28 h-28 text-[var(--periwinkle-dark)] opacity-10 absolute -right-4 -bottom-6 pointer-events-none group-hover:scale-105 transition-transform duration-500" />
-          
-          {activeSection === 'models' && (
-            <div className="mt-6 pt-6 border-t border-[var(--line)] space-y-4 animate-fade-in relative z-10">
-              <p className="font-semibold text-[var(--periwinkle-dark)] font-[var(--font-display)] text-sm">Psychology Runtime Modules:</p>
-              <div className="p-5 rounded-2xl bg-[var(--bg-subtle)] border border-[var(--line-2)] text-[13px] text-[var(--ink-soft)] font-medium shadow-inner">
-                Hedonic state, stress tracking, cognitive absorption, Theory of Mind per-observer calls.
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

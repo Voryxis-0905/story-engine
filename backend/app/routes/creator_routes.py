@@ -21,6 +21,7 @@ from app.engine import (
 )
 from app.world.schema import CORE_STATE_FILES, ensure_current_schema, read_schema_version, SchemaVersionError
 from app.world.templates import SCHEMA_VERSION
+from app.world.terrain import TERRAINS, LAYERS
 from app.models import (
     CardRegistryUpdate, CanonTimelineUpdate, CharacterStateUpdate,
     ForceAdvanceRequest, CreateSaveRequest, BranchRequest,
@@ -544,7 +545,7 @@ def creator_edit(world_name: str, req: dict):
             if location is None:
                 errors.append(f"unknown location '{location_id}'")
                 continue
-            if field not in {"name", "description", "connected_to", "tags", "discovery_status"}:
+            if field not in {"name", "description", "connected_to", "tags", "discovery_status", "terrain", "elevation", "layer"}:
                 errors.append(f"location field '{field}' is not editable")
                 continue
             if field in ("connected_to", "tags") and not isinstance(value, list):
@@ -552,6 +553,15 @@ def creator_edit(world_name: str, req: dict):
                 continue
             if field == "discovery_status" and value not in {"unknown", "rumored", "discovered", "visited", "creator_only"}:
                 errors.append("invalid discovery_status")
+                continue
+            if field == "terrain" and (not isinstance(value, str) or value not in TERRAINS):
+                errors.append("invalid terrain")
+                continue
+            if field == "layer" and (not isinstance(value, str) or value not in LAYERS):
+                errors.append("invalid layer")
+                continue
+            if field == "elevation" and value is not None and (type(value) is not int or not -2 <= value <= 2):
+                errors.append("elevation must be -2 to 2 or null")
                 continue
             location[field] = value
             applied.append({"kind": "location", "location_id": location_id, "field": field})

@@ -10,11 +10,19 @@ export function PlayNarrative({ playState, turns, input, setInput, loading, erro
   const [previewedSkip, setPreviewedSkip] = useState('');
   useEffect(() => { if (!timeSkipOpen) { setSkip(s => ({ ...s, force: false })); setPreviewedSkip(''); } }, [timeSkipOpen]);
   return (<>
-      {/* CENTER NARRATIVE MAIN VIEW */}
-      <main className="flex-1 flex flex-col h-full bg-[var(--bg-surface)] relative">
+      {/* CENTER NARRATIVE MAIN VIEW.
+          `min-w-0` is load-bearing. This column is a flex child of the play row,
+          and a flex item's automatic minimum size is its *content* minimum, not
+          zero. The control bar below holds a "Start Chapter" button that cannot
+          wrap, so the column's min-content width is ~443px (composer input +
+          padding) no matter how narrow the viewport gets - measured at 1024px
+          it refused to shrink past 443px and pushed the drawer and icon strip
+          off the right edge. `min-w-0` lets it shrink and the inner rows scroll
+          or truncate instead of the page scrolling sideways. */}
+      <main className="flex-1 min-w-0 flex flex-col h-full bg-[var(--bg-surface)] relative">
         {/* Top Control Bar */}
-        <div className="px-6 py-3 border-b border-[var(--line-2)] flex items-center justify-between glass-panel shadow-sm z-10">
-          <div className="flex items-center gap-4 text-xs font-mono font-bold text-[var(--ink-soft)]">
+        <div className="px-6 py-3 border-b border-[var(--line-2)] flex items-center justify-between gap-3 glass-panel shadow-sm z-10">
+          <div className="flex items-center gap-4 text-xs font-mono font-bold text-[var(--ink-soft)] min-w-0">
             {/* Pacing control commented out: AI story engine handles pacing dynamically based on plot beat */}
             {/*
             <div className="flex items-center gap-1.5">

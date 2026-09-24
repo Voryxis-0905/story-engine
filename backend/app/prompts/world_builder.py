@@ -232,6 +232,9 @@ RULES:
    - "x": X coordinate (0.0 to 100.0) — left to right
    - "y": Y coordinate (0.0 to 100.0) — bottom to top
    - "zone": The zone/region this location belongs to (e.g. "Northern Plains", "Undercity")
+   - "terrain": One of unknown, coast, water, plain, forest, desert, mountain, wetland, urban
+   - "elevation": Relative height band -2 (deep basin) to 2 (high summit), or null when unstated. 0 means explicitly level ground, NOT unknown.
+   - "layer": One of unknown, surface, underground, sky
    - "unlock_realm": The minimum realm required to enter this location, or null if no realm restriction
    - "unlock_exp": The minimum EXP required to enter this location (0 if no restriction)
    - "unlock_checkpoint_id": The checkpoint ID that unlocks this location, or null if available from start
@@ -252,7 +255,13 @@ RULES:
    - Connected locations should be closer together than unconnected ones
    - Leave some empty space for exploration / fog of war feel
 
-7. Generate 5-15 location nodes depending on the world's scope.
+7. TERRAIN AND DEPTH (compact, factual metadata; no extra prose):
+   - Fill terrain/elevation/layer only when the supplied world or checkpoint text supports them. Otherwise use "unknown" or null. Do not turn genre expectations into geography: a cultivation world does not automatically contain mountains, floating islands, or caves.
+   - Elevation is relative within this map, not metres or a combat statistic. Keep it consistent between nearby connected locations. An underground room uses layer="underground"; do not also assign a negative elevation unless the source establishes a deep basin.
+   - Preserve named continents and large zones in "zone"; coordinates place the story's known sites, not every settlement on a continent. Do not fabricate coastlines, roads, heights, or hidden landmarks merely to make the map look complete.
+   - These fields are generated once with the location map. They are visual hints only and never change route connectivity or travel times.
+
+8. Generate 5-15 location nodes depending on the world's scope.
 
 VALID LOCATION TAGS EXAMPLES:
 safe, dangerous, urban, wilderness, dungeon, shop, temple, palace, forest, mountain,
@@ -268,6 +277,9 @@ EXAMPLE output format:
       "x": 20,
       "y": 30,
       "zone": "Frontier Lands",
+      "terrain": "unknown",
+      "elevation": null,
+      "layer": "unknown",
       "unlock_realm": null,
       "unlock_exp": 0,
       "unlock_checkpoint_id": null,

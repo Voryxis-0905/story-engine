@@ -20,6 +20,24 @@ const backendToLength = (value?: string): OutputLength => {
 
 const draftKey = (name: string) => `${DRAFT_STORAGE_PREFIX}${name}`;
 
+/**
+ * Whether the World State panel starts open.
+ *
+ * It is 288px of fixed chrome in the play row. At `xl` and up there is room for
+ * it and it has always started open, so that is preserved. Below `xl` the panel
+ * is an overlay (see `PlaySidebar`), and starting it open would drop a panel
+ * over the story the player just opened - so the narrow default is closed, and
+ * the rail's toggle is what brings it in. That is also what makes the toggle's
+ * own label honest from the first paint.
+ *
+ * `matchMedia` is absent under jsdom, where the hook is exercised directly;
+ * defaulting to open there keeps desktop-shaped behaviour unchanged.
+ */
+const sidebarStartsOpen = () =>
+  typeof window === 'undefined'
+  || typeof window.matchMedia !== 'function'
+  || window.matchMedia('(min-width: 1280px)').matches;
+
 export function usePlaySession(worldName: string) {
   const [playState, setPlayState] = useState<PlayState | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -31,7 +49,7 @@ export function usePlaySession(worldName: string) {
   const [outputLength, setOutputLengthState] = useState<OutputLength>('medium');
 
   // Sidebar collapse
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(sidebarStartsOpen);
 
   // Collapsible turns history state
   const [expandedTurns, setExpandedTurns] = useState<Record<number, boolean>>({});
@@ -89,8 +107,23 @@ export function usePlaySession(worldName: string) {
   const pendingActionRef = useRef<{ id: string; userInput: string } | null>(null);
   const revisionRef = useRef<number | undefined>(undefined);
 
+  /**
+   * Monotonic ticket for travel previews. Only the newest request may install
+   * its result, and only while it still belongs to the current world.
+   *
+   * Why a counter rather than the world token alone: two previews of the *same*
+   * world race each other. Selecting one destination, changing your mind, then
+   * having the first (slower) response land last would overwrite the route to
+   * the place you are actually looking at with one to a place you already
+   * abandoned. The ticket makes "newest wins" total, across worlds and within
+   * one world.
+   */
+  const previewTicketRef = useRef(0);
+  /** Destination of the newest preview request, so a response can be matched to it. */
+  const previewDestinationRef = useRef<string | null>(null);
+
   const makeRequestId = () =>
-    (globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
   const readStoredDraft = useCallback((name: string): PlayDraft | null => {
     try {
@@ -109,12 +142,22 @@ export function usePlaySession(worldName: string) {
         sessionStorage.removeItem(draftKey(worldName));
       }
     } catch {
-      // sessionStorage can be unavailable; the in-memory draft still works
+      /* sessionStorage may be unavailable (private mode, quota) — drafts are best-effort. */
     }
   }, [worldName]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Scroll the transcript column itself, never `scrollIntoView`.
+    //
+    // `scrollIntoView` walks *every* scrollable ancestor, and this app has a
+    // horizontal one above the transcript: PlayPage's three-column flex row.
+    // At 390px that row is 1194px wide inside a 390px viewport, so the smooth
+    // scroll dragged it sideways and shoved the map off the left edge
+    // (measured: canvas at x = -222, 28% visible) — and it ran on every turn,
+    // racing the drawer-reveal effect in PlayPage. Writing scrollTop on the
+    // column keeps the scroll strictly vertical.
+    const column = chatEndRef.current?.parentElement;
+    if (column) column.scrollTo({ top: column.scrollHeight, behavior: 'smooth' });
   }, [turns]);
 
   const loadPlayState = useCallback(async () => {
@@ -188,18 +231,16 @@ export function usePlaySession(worldName: string) {
         setTurns([]);
         return;
       }
-
       const preludeChapter = chapters.find((c: any) => c.chapter_index === 0);
       if (preludeChapter && preludeChapter.chapter_text) {
         setPreludeText(preludeChapter.chapter_text);
       }
-
       const nonPrelude = chapters.filter((c: any) => c.chapter_index !== 0);
       if (nonPrelude.length === 0) {
         setTurns([]);
         return;
       }
-      const formatted = nonPrelude.map((c: any) => ({
+      const formatted: Turn[] = nonPrelude.map((c: any) => ({
         input: c.user_input || 'Start Chapter',
         output: c.chapter_text,
         chapterIndex: c.chapter_index,
@@ -209,7 +250,7 @@ export function usePlaySession(worldName: string) {
       }));
       setTurns(formatted);
     } catch {
-      // No chapters yet — ignore
+      /* No chapters yet (fresh world) — leaving `turns` untouched is correct. */
     }
   }, [worldName]);
 
@@ -230,12 +271,18 @@ export function usePlaySession(worldName: string) {
     setQuests([]);
     setJournal([]);
     setEpilogueChoices([]);
+    // Bump the ticket too: a preview of the previous world that is still in
+    // flight must not install itself into the new world, and must not clear the
+    // new world's loading flag on its way out.
+    previewTicketRef.current += 1;
+    previewDestinationRef.current = null;
     setTravelPreview(null);
     setPreviewLoading(false);
     setTimeSkipOpen(false);
     setTimeSkipPreview(null);
     setTimeSkipLoading(false);
     setError(null);
+
     if (worldName) {
       loadPlayState();
       loadMap();
@@ -272,14 +319,16 @@ export function usePlaySession(worldName: string) {
     });
   };
 
-  const submitAction = async (rawInput: string, options: { clearInputOnSuccess: boolean; requestId?: string }) => {
+  const submitAction = async (
+    rawInput: string,
+    options: { clearInputOnSuccess: boolean; requestId: string },
+  ) => {
     const userInput = rawInput.trim();
     if (!userInput || sendingRef.current) return;
     const token = worldTokenRef.current;
     sendingRef.current = true;
     setLoading(true);
     setError(null);
-
     try {
       const res = await api.play.continue(worldName, userInput, {
         requestId: options.requestId,
@@ -352,17 +401,39 @@ export function usePlaySession(worldName: string) {
     const destination = location?.name || location?.id;
     if (!destination) return;
     const token = worldTokenRef.current;
+    const ticket = previewTicketRef.current + 1;
+    previewTicketRef.current = ticket;
+    previewDestinationRef.current = destination;
+    // Drop the previous result *before* the request goes out. Keeping it while
+    // the new one is in flight means the map draws a route to the old
+    // destination next to the new selection — and "Travel here" stays available
+    // for a journey the player has not had checked yet. Re-requesting the same
+    // destination must invalidate the old answer just as thoroughly: it was
+    // computed from older world state.
+    setTravelPreview(null);
     setPreviewLoading(true);
+
+    /** True when this response is still the newest request for the live world. */
+    const isCurrent = () =>
+      ticket === previewTicketRef.current
+      && token === worldTokenRef.current
+      && previewDestinationRef.current === destination;
+
     try {
       const preview = await api.map.previewTravel(worldName, destination);
-      if (token !== worldTokenRef.current) return;
+      if (!isCurrent()) return;
+      // Defence in depth: the engine echoes the destination back, so a response
+      // that does not name the place we asked for is not ours to trust.
+      if (preview && preview.destination && preview.destination !== destination) return;
       setTravelPreview(preview);
     } catch (e: any) {
-      if (token !== worldTokenRef.current) return;
+      if (!isCurrent()) return;
       setTravelPreview(null);
       setError(e.message || 'Failed to preview journey');
     } finally {
-      if (token === worldTokenRef.current) setPreviewLoading(false);
+      // Only the newest request may report "no longer loading"; a stale one
+      // clearing the flag would hide the spinner for a request still in flight.
+      if (isCurrent()) setPreviewLoading(false);
     }
   };
 
@@ -454,7 +525,9 @@ export function usePlaySession(worldName: string) {
     // request id lets the backend replay a turn that actually committed.
     return submitAction(draft.userInput, {
       clearInputOnSuccess: false,
-      requestId: draft.requestId,
+      // A draft persisted by an older build may predate request ids; mint one
+      // rather than sending `undefined` (the backend would reject the replay).
+      requestId: draft.requestId ?? makeRequestId(),
     });
   };
 
@@ -465,9 +538,12 @@ export function usePlaySession(worldName: string) {
     setLoading(true);
     setError(null);
     try {
-      // Check if chapters already exist
-      if (playState && playState.arc_progress.current_index > 0) {
-        // Chapters exist — reload them instead
+      // A confirmed prelude advances the checkpoint before Chapter 1 exists.
+      // Check committed chapters, not arc progress, or Begin Story becomes a
+      // no-op whenever a world starts from cp_0.
+      const chapters = await api.play.getChapters(worldName);
+      if (token !== worldTokenRef.current) return;
+      if (chapters?.some((chapter) => chapter.chapter_index !== 0)) {
         await loadExistingChapters();
         return;
       }
@@ -627,7 +703,6 @@ export function usePlaySession(worldName: string) {
   const arc = playState?.arc_progress;
   const clock = playState?.story_clock || {};
   const calendar = playState?.calendar || null;
-
 
   return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handlePreviewTravel, travelPreview, previewLoading, handleTravelTo, handleItemAction, handleContinueJourney, handleAbandonJourney, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock, calendar };
 }

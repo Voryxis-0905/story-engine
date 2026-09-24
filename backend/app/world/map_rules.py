@@ -3,6 +3,7 @@ from app.llm_client import LLMCallError
 from app.llm_client import call_llm
 from app.llm_client import parse_llm_json
 from app.prompts import LOCATION_MAP_GENERATOR_PROMPT
+from app.world.terrain import normalize_terrain_fields
 import json
 import logging
 
@@ -94,6 +95,7 @@ def generate_location_map(world_config: dict, checkpoints: list,
                 loc["x"] = max(0, min(100, float(loc.get("x", 0))))
                 loc["y"] = max(0, min(100, float(loc.get("y", 0))))
                 loc["unlock_exp"] = max(0, int(loc.get("unlock_exp", 0)))
+                normalize_terrain_fields(loc)
         return reconcile_checkpoint_location_gates(
             {"locations": locations}, checkpoints or [], character_state or {})
     except (LLMCallError, ValueError, json.JSONDecodeError, TypeError):

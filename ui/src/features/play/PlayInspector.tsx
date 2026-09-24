@@ -12,12 +12,43 @@ type Props = Pick<PlaySession, 'playState' | 'activeDrawer' | 'setActiveDrawer' 
 
 export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locations, affinityGraph, protagonist, quests, journal, handleTravelTo, handlePreviewTravel, travelPreview, previewLoading, handleItemAction, handleContinueJourney, handleAbandonJourney }: Props) {
   return (<>
-      {/* RIGHT ICON STRIP & SLIDE-IN DRAWERS */}
-      <div className="flex z-20 h-full shrink-0">
-        {/* Active Drawer Panel */}
+      {/* RIGHT ICON STRIP & SLIDE-IN DRAWERS.
+          `z-30` is needed only for the desktop in-flow column; on mobile it
+          would create a stacking context that traps the fixed children below
+          the app navbar (`z-50`), making the strip untappable. Hence `md:z-30`. */}
+      <div className="flex md:z-30 h-full shrink-0">
+        {/* Active Drawer Panel.
+            Below `xl` the panel is a viewport overlay; at `xl` and up it is the
+            in-flow fourth column.
+
+            The reason is arithmetic, not taste: the play row is sidebar +
+            transcript + drawer + icon strip, and the fixed widths are
+            288px + 384px + 64px = 736px of chrome. The transcript is the only
+            flexible child, so it absorbs the remainder - which means
+
+              1024px leaves it 288px, and 768px leaves nothing at all. An
+              in-flow drawer at those widths opens past the right edge, and the
+              map the player just asked for is the part that is off-screen.
+
+            So below `xl` the panel is `fixed` against the right edge, spanning
+            from the icon strip to the viewport, and the transcript keeps the
+            whole column it had before the drawer opened.
+
+            Two width details that are easy to get wrong:
+            - The panel sizes itself as `100vw` minus the strip, NOT `w-screen`.
+              A `100vw` box ignores the scrollbar and, on the phone profiles
+              (viewport 360/412 with a fractional device-pixel ratio), measured
+              ~395/~448 CSS px - i.e. it pushed the page ~35px wider than the
+              viewport and made the player scroll sideways to reach the far edge
+              of a panel that was supposed to be the no-scrolling fix. Spanning
+              the remaining space between the strip and the right edge is exact
+              at every width and cannot overflow.
+            - `max-w-[100vw]` is a guard for the overlay case only. At `xl` the
+              panel is a fixed `w-96` column, and leaving that clamp on would
+              collapse it to the viewport width instead. */}
         {activeDrawer && (
-          <div className="w-96 glass-panel rounded-none border-y-0 border-r-0 p-6 flex flex-col h-full animate-slide-in-right shadow-[var(--shadow-md)]">
-            <div className="flex items-center justify-between pb-4 border-b border-[var(--line-2)] mb-6">
+          <div className="fixed top-[var(--navbar-h,137px)] right-16 bottom-0 left-0 z-[70] xl:static xl:top-auto xl:bottom-auto xl:left-auto xl:right-auto xl:z-auto xl:w-96 xl:max-w-none glass-panel rounded-none border-y-0 border-r-0 p-4 sm:p-6 flex flex-col h-full animate-slide-in-right shadow-[var(--shadow-md)]">
+            <div className="flex items-center justify-between pb-4 border-b border-[var(--line-2)] mb-6 shrink-0">
               <h3 className="text-[15px] font-bold text-[var(--ink-main)] uppercase tracking-wider font-mono flex items-center gap-2">
                 {activeDrawer === 'inventory' && <BriefcaseIcon   className="w-5 h-5 text-[var(--accent-peach)]" />}
                 {activeDrawer === 'map' && <MapIcon   className="w-5 h-5 text-[var(--accent-sage)]" />}
@@ -29,9 +60,19 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
                 {activeDrawer === 'journal' && <NewspaperIcon   className="w-5 h-5 text-[var(--ink-soft)]" />}
                 <span>{activeDrawer}</span>
               </h3>
+              {/*
+                The close button sits in the top-right corner of a full-width
+                overlay, which is underneath the icon strip while the drawer is
+                in overlay mode. Without a gutter the strip would cover it and
+                the panel could only be dismissed with the strip button - so the
+                header reserves exactly the strip's width. At `lg` the panel is
+                a flex neighbour of the strip and the padding is redundant.
+              */}
               <button
                 onClick={() => setActiveDrawer(null)}
-                className="p-1.5 rounded-lg text-[var(--ink-soft)] hover:text-[var(--ink-main)] hover:bg-[var(--bg-subtle)] transition-colors"
+                title="Close panel"
+                aria-label="Close panel"
+                className="mr-16 shrink-0 p-1.5 rounded-lg text-[var(--ink-soft)] hover:text-[var(--ink-main)] hover:bg-[var(--bg-subtle)] transition-colors xl:mr-0"
               >
                 <XMarkIcon className="w-5 h-5" />
               </button>
@@ -105,8 +146,8 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
               {/* 3. Codex Drawer */}
               {activeDrawer === 'codex' && (
                 <div className="space-y-6">
-                  <div className="h-64 rounded-2xl border-2 border-[var(--line)] overflow-hidden shadow-inner bg-[var(--bg-surface)]">
-                    <Suspense fallback={<div className="h-full flex items-center justify-center text-xs text-[var(--ink-soft)]">Loading graph…</div>}>
+                  <div className="rounded-2xl border border-[var(--line)] shadow-sm bg-[var(--bg-surface)]">
+                    <Suspense fallback={<div className="flex h-56 items-center justify-center text-xs text-[var(--ink-soft)]">Loading relationships…</div>}>
                       <CodexGraph nodes={affinityGraph.nodes} edges={affinityGraph.edges} />
                     </Suspense>
                   </div>
@@ -235,8 +276,26 @@ export function PlayInspector({ playState, activeDrawer, setActiveDrawer, locati
           </div>
         )}
 
-        {/* Right Vertical Icon Strip */}
-        <div className="w-16 glass-panel border-y-0 border-r-0 flex flex-col items-center py-6 space-y-5 z-10 shadow-sm">
+        {/* Right Vertical Icon Strip.
+            On mobile this is the only way into every panel, so it must be
+            pinned to the viewport rather than sitting at the far end of an
+            over-wide flex row - otherwise the entry point to the map is itself
+            off-screen and the drawer can never be opened.
+            Overlay mode below `lg`: the panel is `w-screen`, so it covers the
+            strip entirely. The strip is therefore lifted *above* the panel
+            (`z-[80]`, panel is `z-[70]`) rather than left underneath it - an
+            overlay that swallows the very control that switches panels would
+            trap the player inside the panel they just opened (measured: the
+            Inventory button became unclickable with the map open). It flips
+            back to `z-10` at `lg`, where it is an ordinary flex neighbour and
+            a bare `z-[80]` would float it over the panel's edge instead.
+            It starts below the app's sticky navbar (`top-[var(--navbar-h)]`)
+            because that navbar is ~137px tall and would otherwise sit on top of
+            the first buttons, swallowing their taps.
+            Inside a panel the strip's buttons sit over the panel's own close
+            button, so the panel header keeps a right gutter (`pr-16`) and gives
+            up its inner padding there - see the drawer above. */}
+        <div className="fixed top-[var(--navbar-h,137px)] bottom-0 right-0 z-[80] xl:static xl:top-auto xl:bottom-auto xl:z-10 w-16 glass-panel border-y-0 border-r-0 flex flex-col items-center py-6 space-y-5 shadow-sm">
           <button
             onClick={() => setActiveDrawer(activeDrawer === 'inventory' ? null : 'inventory')}
             title="Inventory"

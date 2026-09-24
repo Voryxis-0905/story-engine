@@ -5,6 +5,24 @@ import math
 import re
 
 
+# Discovery states the player is never allowed to learn about. Kept here rather
+# than at the route layer so "what the player may see" has exactly one definition
+# shared by the map endpoint, the travel preview and anything added later.
+HIDDEN_DISCOVERY_STATES = ("unknown", "creator_only")
+
+# What a hidden place is called once it has to be mentioned at all. A route may
+# legitimately pass through somewhere the player has not discovered; the player
+# is told a stop exists, never which one.
+HIDDEN_LOCATION_LABEL = "Unknown location"
+
+
+def is_hidden(location: dict) -> bool:
+    """True when the player must not learn this place's name or details."""
+    if not isinstance(location, dict):
+        return False
+    return location.get("discovery_status", "discovered") in HIDDEN_DISCOVERY_STATES
+
+
 def _locations(location_map: dict) -> list:
     return [item for item in (location_map or {}).get("locations", []) if isinstance(item, dict)]
 
@@ -16,6 +34,50 @@ def _matches(location: dict, ref: str) -> bool:
 
 def find_location(location_map: dict, ref: str):
     return next((item for item in _locations(location_map) if _matches(item, ref)), None)
+
+
+def visible_location_map(location_map: dict, current_location: str = "") -> dict:
+    """The player's projection of a location map.
+
+    Hidden places are removed outright, except the one the protagonist stands in
+    (a character is always allowed to know where they are). Edges that would name
+    a hidden place are dropped too, so routing over this map cannot travel
+    through - or even learn about - somewhere the player has not discovered.
+
+    This is the single definition of "player-visible map". Both the map endpoint
+    and the travel preview derive from it, so a preview can never describe a
+    journey the map would not show, and neither can drift from the other.
+    """
+    all_locations = _locations(location_map)
+    currently_here = find_location(location_map, current_location) if current_location else None
+    keep_ids = {
+        loc.get("id") for loc in all_locations
+        if not is_hidden(loc) or (currently_here and loc.get("id") == currently_here.get("id"))
+    }
+
+    def _edge_target(edge) -> str:
+        if isinstance(edge, str):
+            return edge
+        if isinstance(edge, dict):
+            for key in ("location_id", "to", "id"):
+                if edge.get(key):
+                    return str(edge[key])
+        return ""
+
+    visible = []
+    for loc in all_locations:
+        if loc.get("id") not in keep_ids:
+            continue
+        # A kept location may still point at a hidden neighbour. Dropping the
+        # edge is the point: otherwise the routing layer could step onto a
+        # hidden place and narrate its name.
+        kept_edges = []
+        for edge in loc.get("connected_to", []) or []:
+            target = find_location(location_map, _edge_target(edge))
+            if target and target.get("id") in keep_ids:
+                kept_edges.append(edge)
+        visible.append({**loc, "connected_to": kept_edges})
+    return {"locations": visible}
 
 
 def extract_travel_destination(user_input: str, location_map: dict):
@@ -129,6 +191,136 @@ def preview_travel(location_map: dict, current_location: str, destination_ref: s
         "narration_mode": "brief" if minutes <= 30 else "timeskip" if minutes <= 480 else "journey",
         "risk": {"level": risk_level, "known_tags": known_tags},
     }
+
+
+# Fields that describe the *shape* of a route. Any one of them lets a player
+# count how many hidden stops sit between origin and destination, which is
+# itself information they have not earned. When a route touches a hidden place,
+# all of them are withheld together - redacting the names alone still leaks the
+# structure (measured: `route` of length 3 and a 2-entry `legs` array told the
+# player there was exactly one uncharted stop).
+_ROUTE_STRUCTURE_FIELDS = ("route", "legs", "stopped_at", "waypoints")
+
+# The one thing a redacted route is allowed to say.
+REDACTED_ROUTE_NOTE = "Route passes through unexplored territory"
+
+
+def scrub_preview_for_player(result: dict, location_map: dict) -> dict:
+    """Strip everything a player may not know from a travel preview.
+
+    `preview_travel` runs on the engine's full map. Real travel legitimately
+    passes through places the protagonist has not discovered, and the journey
+    still happens - so the preview must keep saying `available`, and it may keep
+    the total duration and an overall risk level, which describe the trip the
+    player is about to take rather than the ground it crosses.
+
+    What it may not do is reveal the route's *shape*. An earlier version only
+    replaced hidden names with a neutral label and kept `route` and `legs`
+    intact; that still leaked the stop count (`Start -> Unknown location -> City`
+    announces one hidden waypoint) and the per-leg `tags`, which carried
+    `secret_tunnel` / `hidden_passage` straight into the public response.
+
+    So: if the route touches a hidden place at all, every structural field is
+    dropped, no per-leg metadata survives, and `route_redacted` is set so the UI
+    has an explicit signal to render "passes through unexplored territory"
+    instead of inventing a direct road. A fully visible route is returned
+    untouched, per-leg preview and all.
+    """
+    if not isinstance(result, dict):
+        return result
+
+    hidden_ids, hidden_names, hidden_tags = _hidden_identity(location_map)
+    if not hidden_ids and not hidden_names and not hidden_tags:
+        return result
+
+    # Which places on this route are hidden? Compare by id where the preview
+    # carries one, by name otherwise. The engine resolves both spellings.
+    def _is_hidden_ref(*candidates) -> bool:
+        for value in candidates:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            if text in hidden_ids or text in hidden_names:
+                return True
+        return False
+
+    origin = result.get("origin")
+    destination = result.get("destination")
+    # `destination` is public: the player chose it. A hidden *destination* was
+    # already refused upstream, so only the middle of the route can be hidden.
+    touches_hidden = False
+    route_items = result.get("route")
+    if isinstance(route_items, list):
+        for index, item in enumerate(route_items):
+            if index == 0 or index == len(route_items) - 1:
+                continue
+            if _is_hidden_ref(item):
+                touches_hidden = True
+                break
+    if not touches_hidden:
+        for leg in result.get("legs") or []:
+            if not isinstance(leg, dict):
+                continue
+            if _is_hidden_ref(leg.get("from")) or _is_hidden_ref(leg.get("to")):
+                touches_hidden = True
+                break
+    # Any per-leg tag drawn from a hidden place's vocabulary is a leak on its
+    # own, even if the endpoints look clean.
+    if not touches_hidden and hidden_tags:
+        for leg in result.get("legs") or []:
+            if not isinstance(leg, dict):
+                continue
+            for tag in leg.get("tags") or []:
+                if str(tag) in hidden_tags:
+                    touches_hidden = True
+                    break
+            if touches_hidden:
+                break
+
+    if not touches_hidden:
+        # Fully visible route: keep the per-leg preview exactly as it was.
+        return result
+
+    for field in _ROUTE_STRUCTURE_FIELDS:
+        if field in result:
+            result[field] = []
+
+    result["route_redacted"] = True
+    result["route_note"] = REDACTED_ROUTE_NOTE
+    # Keep origin/destination only when they are genuinely visible.
+    if origin is not None and _is_hidden_ref(origin):
+        result.pop("origin", None)
+    if destination is not None and _is_hidden_ref(destination):
+        result.pop("destination", None)
+    # The protagonist standing in a hidden place still knows where they are, so
+    # `destination_id` survives only if the destination itself is visible.
+    if result.get("destination") is None:
+        result.pop("destination_id", None)
+
+    # Risk survives as a level (the trip's difficulty is the player's business),
+    # but never as tag names: a tag like `secret_tunnel` names the hidden place.
+    risk = result.get("risk")
+    if isinstance(risk, dict):
+        result["risk"] = {"level": risk.get("level", "unknown"), "known_tags": []}
+    return result
+
+
+def _hidden_identity(location_map: dict):
+    """Ids, names and tags belonging to places the player must not learn about."""
+    hidden_ids, hidden_names, hidden_tags = set(), set(), set()
+    for loc in _locations(location_map):
+        if not is_hidden(loc):
+            continue
+        loc_id = str(loc.get("id") or "").strip()
+        if loc_id:
+            hidden_ids.add(loc_id)
+        name = str(loc.get("name") or "").strip()
+        if name:
+            hidden_names.add(name)
+        for tag in loc.get("tags") or []:
+            if isinstance(tag, str) and tag:
+                hidden_tags.add(tag)
+    return hidden_ids, hidden_names, hidden_tags
 
 
 def _continue_journey_plan(active_journey: dict, *, tick_minutes: int = 60):

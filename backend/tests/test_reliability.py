@@ -492,7 +492,7 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(locations['forest']['route_preview'], ['Village', 'Forest'])
         self.assertFalse(locations['island']['is_unlocked'])
         self.assertFalse(locations['island']['is_reachable'])
-        self.assertIn('Không có tuyến đường', locations['island']['unlock_reason_missing'])
+        self.assertIn('No route connects', locations['island']['unlock_reason_missing'])
 
     def test_player_map_and_preview_hide_undiscovered_location(self):
         characters = self.read('character_state.json')
@@ -505,19 +505,28 @@ class ReliabilityTests(unittest.TestCase):
              'x': 50, 'y': 50, 'connected_to': [], 'tags': ['secret'],
              'discovery_status': 'unknown'},
         ]})
-        locations = self.client.get(f'/worlds/{self.world}/location-map/status').json()['locations']
-        vault = next(item for item in locations if item['id'] == 'vault')
-        self.assertEqual(vault['name'], 'Unknown location')
-        self.assertEqual(vault['description'], '')
-        self.assertEqual(vault['tags'], [])
-        self.assertFalse(vault['is_unlocked'])
-        legacy_vault = next(item for item in self.client.get(
-            f'/worlds/{self.world}/location-map').json()['locations'] if item['id'] == 'vault')
-        self.assertEqual(legacy_vault['name'], 'Unknown location')
+        # The hidden place is absent, not present-and-blank. Sending a scrubbed
+        # entry would still hand the client its id, its exact x/y and a nameless
+        # node to explain - the name is only one of the things that leaks.
+        status = self.client.get(f'/worlds/{self.world}/location-map/status').json()['locations']
+        self.assertNotIn('vault', {item['id'] for item in status})
+        self.assertNotIn('Secret Moon Vault', json.dumps(status))
+        self.assertNotIn('Spoiler', json.dumps(status))
+        # Its edge must not survive on the visible place either, or a reader
+        # learns the hidden id from a neighbour's data.
+        village = next(item for item in status if item['id'] == 'village')
+        self.assertEqual(village['connected_to'], [])
+
+        # The legacy endpoint uses the same projection, so it cannot leak either.
+        legacy = self.client.get(f'/worlds/{self.world}/location-map').json()['locations']
+        self.assertNotIn('vault', {item['id'] for item in legacy})
+        self.assertNotIn('Secret Moon Vault', json.dumps(legacy))
+
         preview = self.client.post(f'/worlds/{self.world}/travel/preview',
                                    json={'destination': 'Secret Moon Vault'}).json()
         self.assertEqual(preview['status'], 'blocked')
         self.assertEqual(preview['reason'], 'destination_undiscovered')
+        self.assertNotIn('Secret Moon Vault', json.dumps(preview))
 
     def test_creator_can_preview_and_commit_route_and_inventory_edits(self):
         self.write('location_map.json', {'locations': [
@@ -927,7 +936,7 @@ class ReliabilityTests(unittest.TestCase):
                 else:
                     target.write_bytes(original)
 
-    def test_affinity_graph_drops_edges_to_unknown_nodes(self):
+    def test_affinity_graph_contains_only_character_relationships(self):
         state = self.read('character_state.json')
         characters = state['characters']
         known = next(iter(characters))
@@ -947,13 +956,15 @@ class ReliabilityTests(unittest.TestCase):
         node_ids = {node['id'] for node in graph['nodes']}
         self.assertIn(known, node_ids)
         self.assertNotIn('char_never_introduced', node_ids)
+        self.assertTrue(all(node['type'] == 'character' for node in graph['nodes']))
+        self.assertNotIn('loc_known', node_ids)
+        self.assertNotIn('loc_never_visited', node_ids)
         for edge in graph['edges']:
             self.assertIn(edge['source'], node_ids)
             self.assertIn(edge['target'], node_ids)
             self.assertNotEqual(edge['source'], edge['target'])
-        # The location pair that does exist is still reported.
-        self.assertIn({'source': 'loc_known', 'target': 'loc_never_visited', 'label': 'connected'},
-                      graph['edges'])
+        self.assertNotIn({'source': 'loc_known', 'target': 'loc_never_visited', 'label': 'connected'},
+                         graph['edges'])
 
     def test_map_restrictions_warn_once_when_world_has_no_protagonist(self):
         location_map = {'locations': [{'id': 'gate', 'name': 'Gate', 'unlock_exp': 50}]}

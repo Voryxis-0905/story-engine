@@ -2233,7 +2233,9 @@ with unittest.mock.patch("requests.post", side_effect=_mock_requests_post_html):
             check(False, "31. Must raise LLMCallError when receiving HTML body")
         except main.LLMCallError as e:
             err_str = str(e)
-            check("không phải JSON" in err_str or "không đúng định dạng" in err_str, 
+            # The message is UI-facing and was translated to English; accept
+            # either wording so this check survives the translation.
+            check("not JSON" in err_str or "không phải JSON" in err_str or "không đúng định dạng" in err_str,
                   f"31. call_llm catch text/html as LLMCallError, got: {err_str}")
 
 print("--- Nhóm 31 hoàn thành ---\n")

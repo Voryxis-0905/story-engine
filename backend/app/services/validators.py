@@ -1,21 +1,22 @@
 """
 Validators for story config, location map, and world bundle integrity.
-Part of Cụm E – Checkpoint linter (Mục 2.2).
+Part of Cluster E – Checkpoint linter (Section 2.2).
 
-Chạy deterministic (không gọi LLM), phát hiện sớm lỗi cấu trúc ngay sau khi
-story_config / location_map được generate trong builder flow.
-Schema dựa trên codebase thực tế (xem 9.1 trong design doc v2):
-  - location_map.json: "locations" là ARRAY; mỗi location có id/name/connected_to,
-    unlock bằng unlock_realm / unlock_exp / unlock_checkpoint_id,
-    starting location đánh dấu bằng is_starting_location: true.
-  - canon_timeline.json: "checkpoints" là array; mỗi checkpoint có
-    checkpoint_id / description / required_conditions (list dict {field, op, value})
-    / boundary.locations (tên location) / cards_unlocked / default_next_checkpoint_id.
+Runs deterministically (without calling an LLM) to catch structural errors early,
+immediately after story_config / location_map are generated in the builder flow.
+The schema is based on the current codebase (see Section 9.1 of design doc v2):
+  - location_map.json: "locations" is an ARRAY; each location has id/name/connected_to,
+    with unlocking controlled by unlock_realm / unlock_exp / unlock_checkpoint_id,
+    and the starting location marked by is_starting_location: true.
+  - canon_timeline.json: "checkpoints" is an array; each checkpoint has
+    checkpoint_id / description / required_conditions (list of dicts {field, op, value})
+    / boundary.locations (location names) / cards_unlocked / default_next_checkpoint_id.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from app.world.terrain import TERRAINS, LAYERS
 
 VALID_OPS = {">=", "<=", "==", "!=", ">", "<", "contains", "in"}
 VALID_FIELD_PREFIXES = ("story_clock.", "world_flags.")
@@ -24,7 +25,7 @@ REQUIRED_CHECKPOINT_FIELDS = ("checkpoint_id", "description")
 
 
 def _iter_locations(location_map: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Normalize location_map.locations (array) thành list dict."""
+    """Normalize location_map.locations (an array) into a list of dicts."""
     locations = location_map.get("locations", []) if isinstance(location_map, dict) else []
     if not isinstance(locations, list):
         return []
@@ -33,15 +34,15 @@ def _iter_locations(location_map: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def validate_location_map(location_map: Dict[str, Any]) -> List[str]:
     """
-    Validate location_map schema và cross-references.
+    Validate the location_map schema and cross-references.
 
     Checks:
-      - "locations" phải là array
-      - mỗi location có đủ id / name / connected_to
-      - connected_to trỏ đến id location tồn tại, không self-reference
-      - unlock_exp phải là int >= 0; unlock_realm / unlock_checkpoint_id là str hoặc null
-      - ít nhất 1 location đánh dấu is_starting_location: true
-    Returns list error (rỗng = valid).
+      - "locations" must be an array
+      - each location includes id / name / connected_to
+      - connected_to references an existing location id and has no self-references
+      - unlock_exp is an int >= 0; unlock_realm / unlock_checkpoint_id are strings or null
+      - at least one location is marked is_starting_location: true
+    Returns a list of errors (empty means valid).
     """
     errors: List[str] = []
 
@@ -113,6 +114,18 @@ def validate_location_map(location_map: Dict[str, Any]) -> List[str]:
         if visibility not in {"unknown", "rumored", "discovered", "visited", "creator_only"}:
             errors.append(f"{label}: invalid discovery_status {visibility!r}")
 
+        # Optional, backward-compatible relief hints. Null means the source did
+        # not establish a height; a boolean is not an integer height band.
+        terrain = loc.get("terrain", "unknown")
+        if not isinstance(terrain, str) or terrain not in TERRAINS:
+            errors.append(f"{label}: invalid terrain {terrain!r}")
+        layer = loc.get("layer", "unknown")
+        if not isinstance(layer, str) or layer not in LAYERS:
+            errors.append(f"{label}: invalid layer {layer!r}")
+        elevation = loc.get("elevation")
+        if elevation is not None and (type(elevation) is not int or not -2 <= elevation <= 2):
+            errors.append(f"{label}: elevation must be an integer from -2 to 2 or null")
+
     starting = [loc for loc in locations if loc.get("is_starting_location") is True]
     if not starting:
         errors.append(
@@ -178,15 +191,15 @@ def checkpoint_linter(
     Validate canon_timeline consistency.
 
     Checks:
-      - "checkpoints" phải là array
-      - mỗi checkpoint có checkpoint_id / description, không trùng id
-      - boundary.locations trỏ đến location tồn tại (match theo name hoặc id)
-      - cards_unlocked trỏ đến card id tồn tại (nếu truyền card_registry)
-      - default_next_checkpoint_id trỏ đến checkpoint tồn tại (nếu không null)
-      - required_conditions: field base là character tồn tại HOẶC prefix story_clock./world_flags.;
-        op thuộc bộ hợp lệ; có đủ value
-      - WARNING: tất cả location trong cùng checkpoint nên cùng zone-prefix
-    Returns list error (rỗng = valid).
+      - "checkpoints" must be an array
+      - each checkpoint has checkpoint_id / description, with no duplicate ids
+      - boundary.locations references an existing location (matched by name or id)
+      - cards_unlocked references an existing card id (when card_registry is provided)
+      - default_next_checkpoint_id references an existing checkpoint (when not null)
+      - required_conditions: the field base is an existing character OR uses the
+        story_clock./world_flags. prefix; op is valid; value is present
+      - WARNING: all locations in one checkpoint should share a zone prefix
+    Returns a list of errors (empty means valid).
     """
     errors: List[str] = []
 
@@ -237,7 +250,7 @@ def checkpoint_linter(
             if not isinstance(cp_locations, list):
                 errors.append(f"{label}: boundary.locations must be a list")
             else:
-                # Track zones for warning
+                # Track zones for the warning.
                 zones = []
                 for loc_ref in cp_locations:
                     if not isinstance(loc_ref, str):
@@ -247,7 +260,7 @@ def checkpoint_linter(
                         errors.append(
                             f"{label}: boundary.locations references non-existent location '{loc_ref}'"
                         )
-                    # Get zone from location
+                    # Get the zone from the location.
                     loc = loc_map_by_name.get(loc_ref) or loc_map_by_id.get(loc_ref)
                     if loc:
                         loc_name = loc.get("name", "")
@@ -255,7 +268,7 @@ def checkpoint_linter(
                             zone = loc_name.split(" - ", 1)[0]
                             zones.append(zone)
 
-                # WARNING: check zone consistency
+                # WARNING: Check zone consistency.
                 if len(set(zones)) > 1:
                     errors.append(
                         f"WARNING: {label}: boundary.locations contain mixed zone prefixes: {set(zones)} "
@@ -295,16 +308,16 @@ def validate_world_bundle(
     card_registry: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """
-    Validate toàn bộ world bundle, gộp tất cả validator.
+    Validate the entire world bundle by combining all validators.
 
     Checks:
-      - world_config có display_name (hoặc name)
-      - location_map valid (delegate validate_location_map)
-      - canon_timeline valid (delegate checkpoint_linter)
-      - character_state: characters là dict; mỗi char có name/location/power_stat
-      - (nếu story_mode == "fixed_ending") target_ending_scenario phải có
+      - world_config has display_name (or name)
+      - location_map is valid (delegates to validate_location_map)
+      - canon_timeline is valid (delegates to checkpoint_linter)
+      - character_state: characters is a dict; each character has name/location/power_stat
+      - when story_mode == "fixed_ending", target_ending_scenario includes
         summary + endgame_conditions
-    Returns list error (rỗng = valid).
+    Returns a list of errors (empty means valid).
     """
     errors: List[str] = []
 

@@ -298,6 +298,9 @@ class LocationNodeModel(BaseModel):
     x: float = Field(default=0, ge=0, le=100, description="X coordinate on map (0-100)")
     y: float = Field(default=0, ge=0, le=100, description="Y coordinate on map (0-100)")
     zone: str = Field(default="", description="Zone/area this location belongs to")
+    terrain: Literal["unknown", "coast", "water", "plain", "forest", "desert", "mountain", "wetland", "urban"] = "unknown"
+    elevation: Optional[int] = Field(default=None, ge=-2, le=2, description="Relative height band; null when unknown")
+    layer: Literal["unknown", "surface", "underground", "sky"] = "unknown"
     unlock_realm: Optional[str] = Field(default=None, description="Minimum realm required to access")
     unlock_exp: int = Field(default=0, description="Minimum EXP required to access")
     unlock_checkpoint_id: Optional[str] = Field(default=None, description="Checkpoint required to unlock")

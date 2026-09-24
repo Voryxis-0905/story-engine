@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { CodeBracketIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { api } from '../../api/client';
@@ -12,9 +12,30 @@ export const Navbar: React.FC<NavbarProps> = ({ currentWorld, onWorldChange }) =
   const location = useLocation();
   const navigate = useNavigate();
   const [worlds, setWorlds] = useState<string[]>([]);
+  const headerRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     loadWorlds();
+  }, []);
+
+  // Publish the navbar's real height as `--navbar-h`.
+  //
+  // The play screen pins its mobile drawer and icon strip to the bottom of the
+  // viewport, and they have to start *below* this navbar: it is sticky and
+  // ~137px tall on a phone, so anything anchored at `top-0` has its first
+  // controls covered and untappable. The height depends on how the nav items
+  // wrap, so it is measured rather than hardcoded - a magic number would drift
+  // the moment the nav content changes.
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const publish = () => {
+      document.documentElement.style.setProperty('--navbar-h', `${el.getBoundingClientRect().height}px`);
+    };
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   const loadWorlds = async () => {
@@ -33,7 +54,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentWorld, onWorldChange }) =
   };
 
   return (
-    <header className="sticky top-0 z-50 px-8 py-4 flex items-center justify-between glass-panel shadow-sm">
+    <header ref={headerRef} className="sticky top-0 z-50 px-8 py-4 flex items-center justify-between glass-panel shadow-sm">
       {/* Left: Brand Logo & Title */}
       <div className="flex items-center gap-6">
         <Link to="/" className="flex items-center gap-3 group text-decoration-none">

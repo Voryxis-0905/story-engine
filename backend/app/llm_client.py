@@ -263,7 +263,7 @@ def call_llm(system_prompt: str, user_prompt: str, user_input_for_mock: str = ""
 
         content_type = resp.headers.get("Content-Type", "")
         if content_type and "json" not in content_type.lower():
-            last_error = f"Provider {provider} returned HTTP {resp.status_code} (không phải JSON, Content-Type: {content_type})"
+            last_error = f"Provider {provider} returned HTTP {resp.status_code} (not JSON; Content-Type: {content_type})"
             continue
 
         try:

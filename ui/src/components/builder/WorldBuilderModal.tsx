@@ -316,7 +316,7 @@ export const WorldBuilderModal: React.FC<WorldBuilderModalProps> = ({ isOpen, on
                     }
                   }}
                   rows={4}
-                  placeholder="Describe your world idea freely in any language (e.g. Một thế giới tu tiên nơi linh khí suy giảm, ma giáo trỗi dậy và nhân vật chính mang trong mình ngọn lửa rồng cổ xưa...)"
+                  placeholder="Describe your world idea freely in any language (e.g. An immortal cultivation world where spiritual energy is fading, a demonic sect rises, and the protagonist carries an ancient dragon flame...)"
                   className="w-full px-4 py-3 rounded-xl bg-[var(--bg-subtle)] border border-[var(--line-2)] text-[var(--ink-main)] text-sm focus:outline-none focus:border-[var(--accent-sage)] shadow-inner resize-none placeholder:text-[var(--ink-faint)] leading-relaxed"
                 />
               </div>

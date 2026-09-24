@@ -136,7 +136,7 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         if not turns:
             raise HTTPException(
                 status_code=400,
-                detail="Khong co turn nao de regenerate. World chua co chapter nao."
+                detail="There is no turn to regenerate. This world has no chapters yet."
             )
         last_turn = turns[-1]
         if last_turn.get("chapter_closed"):
@@ -163,9 +163,9 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     if checkpoint is None:
         raise HTTPException(
             status_code=400,
-            detail=f"current_checkpoint_id '{current_checkpoint_id}' không khớp checkpoint nào "
-                   f"in canon_timeline (world có thể là data cũ, chưa có field này -- "
-                   f"chạy lại seed-demo hoặc set thủ công)."
+            detail=f"current_checkpoint_id '{current_checkpoint_id}' does not match any checkpoint "
+                   f"in canon_timeline (this may be legacy world data that lacks this field; "
+                   f"run seed-demo again or set it manually)."
         )
 
     boundary_advisory = world_config.get("checkpoint_boundary_mode") == "advisory"
@@ -191,9 +191,9 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     if not boundary_locations and not boundary_chars:
         raise HTTPException(
             status_code=400,
-            detail="Checkpoint hiện tại không có phạm vi tương tác hợp lệ (locations=[] va "
-                   "allowed_characters=[]). Có thể cần confirm prelude trước, hoặc world đang "
-                   "kẹt ở checkpoint chuyển tiếp."
+            detail="The current checkpoint has no valid interaction boundary (locations=[] and "
+                   "allowed_characters=[]). Confirm the prelude first, or check whether the world "
+                   "is stuck on a transition checkpoint."
         )
 
     pacing_config = get_pacing_context_config(world_config.get("pacing_level", "Balanced"))

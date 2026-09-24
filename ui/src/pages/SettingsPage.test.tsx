@@ -43,23 +43,31 @@ function renderPage() {
   );
 }
 
-async function openModules() {
+async function openSettings() {
   renderPage();
   await waitFor(() => expect(api.config.get).toHaveBeenCalled());
-  fireEvent.click(screen.getByText('Modules'));
   return document.querySelector('input[type="password"]') as HTMLInputElement;
 }
 
 describe('SettingsPage secret handling', () => {
+  it('shows the working AI settings without placeholder sections', async () => {
+    await openSettings();
+    expect(screen.getByText('AI Connection')).toBeTruthy();
+    expect(screen.getByText('Save Configuration')).toBeTruthy();
+    expect(screen.queryByText('Character Cards')).toBeNull();
+    expect(screen.queryByText('Scenes')).toBeNull();
+    expect(screen.queryByText('Engine Models')).toBeNull();
+  });
+
   it('never loads the raw key into the form and shows the masked hint', async () => {
-    const keyInput = await openModules();
+    const keyInput = await openSettings();
     expect(keyInput).toBeTruthy();
     expect(keyInput.value).toBe('');
     expect(keyInput.placeholder).toContain('sk-o\u20269999');
   });
 
   it('saving with a blank key asks the backend to keep the stored key', async () => {
-    await openModules();
+    await openSettings();
     fireEvent.click(screen.getByText('Save Configuration'));
     await waitFor(() => expect(api.config.update).toHaveBeenCalled());
     const payload = api.config.update.mock.calls[0][0];
@@ -68,7 +76,7 @@ describe('SettingsPage secret handling', () => {
   });
 
   it('typing a new key sends an explicit replace action', async () => {
-    const keyInput = await openModules();
+    const keyInput = await openSettings();
     fireEvent.change(keyInput, { target: { value: 'sk-new-secret' } });
     fireEvent.click(screen.getByText('Save Configuration'));
     await waitFor(() => expect(api.config.update).toHaveBeenCalled());
@@ -78,7 +86,7 @@ describe('SettingsPage secret handling', () => {
   });
 
   it('the clear button sends an explicit delete action', async () => {
-    await openModules();
+    await openSettings();
     fireEvent.click(screen.getByText('Clear Stored Key'));
     await waitFor(() => expect(api.config.update).toHaveBeenCalled());
     const payload = api.config.update.mock.calls[0][0];
