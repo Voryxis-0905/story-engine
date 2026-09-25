@@ -37,7 +37,7 @@ MANDATORY RULES:
 20. When "time_skip_resolution" is present, summarize only the granted duration and the stated activity. The engine owns elapsed time. Stop where the resolution says it stops, do not move the protagonist unless a separate travel resolution exists, and never reveal a hidden event.
 21. `action_resolution.engine_effects` is the executable consequence plan already validated by the engine. Narrate observable effects exactly. An effect with `visibility: hidden` may only be suggested as an uncertain unseen consequence; never reveal its event, outcome, or hidden fact. Do not duplicate effects in state_changes, invent another effect, or replace a locked event outcome. `rejected_effects` are non-executable metadata and must never happen in the story.
 22. If opening_setup is true, write only the situation immediately before the first consequential event. End on an actionable choice. Do not complete a selection, binding, attack, death, or other irreversible event before the player has acted.
-23. The payload's story_clock is the exact start of this turn. Keep explicit dates and clock times compatible with it and with the elapsed_time you propose. A train or appointment hours later is not "about to leave" unless the scene actually advances there. When the prose ends, the characters must physically be at the location proposed in state_changes; if they have only begun walking, keep their origin or an intermediate location instead of claiming arrival.
+23. The payload's story_clock is the exact start of this turn. Convert minute_of_day to an ordinary clock time before drafting, then keep every on-scene time reference inside the interval from that start through the elapsed_time you propose. If the turn starts at 11:10, an eleven o'clock news broadcast cannot come on later in that scene. A train or appointment hours later is not "about to leave" unless the scene actually advances there. When the prose ends, the characters must physically be at the location proposed in state_changes; if they have only begun walking, keep their origin or an intermediate location instead of claiming arrival.
 24. Respect a player-specified stopping point. If they ask to stop at an entrance or before an event, do not continue into the next area or perform the next action merely to make a stronger ending. End the scene where the player requested and leave the next decision open.
 
 EXACT JSON STRUCTURE TO RETURN:
@@ -194,3 +194,180 @@ EXACT JSON STRUCTURE TO RETURN:
   "action_translation": ""
 }
 """
+
+
+# ---------------------------------------------------------------------------
+# Experimental narration mode.
+#
+# The experimental profile changes *narrative guidance only*. It is built from
+# the classic prompts by swapping named sections, so every rule that governs
+# truth - the JSON shape, boundary/location scope, the engine-committed
+# action result, item and travel resolutions, the clock, character knowledge,
+# language, and the prohibition on killing characters - stays byte-identical to
+# the classic prompt by construction rather than by careful copying.
+# The number of optional anchor keywords and illustrative JSON values are
+# intentionally relaxed in the experimental planner; the required keys remain.
+#
+# `_swap_section` refuses to build a prompt whose markers are missing or
+# ambiguous, so a later edit to the classic wording fails loudly at import
+# instead of silently shipping an experimental prompt that reverted to the old
+# guidance.
+
+
+def _swap_section(base: str, start_marker: str, end_marker: str, replacement: str, label: str) -> str:
+    """Replace the ``[start_marker, end_marker)`` slice of ``base``.
+
+    Everything outside the slice is preserved exactly, including the end
+    marker, so callers can chain several swaps without losing the text between
+    them.
+    """
+    if base.count(start_marker) != 1 or base.count(end_marker) != 1:
+        raise RuntimeError(
+            f"Cannot build the experimental {label} prompt: its section markers no longer "
+            f"match the classic prompt. Update EXPERIMENTAL_* in app/prompts/narration.py."
+        )
+    start = base.index(start_marker)
+    end = base.index(end_marker)
+    if end < start:
+        raise RuntimeError(
+            f"Cannot build the experimental {label} prompt: section markers are out of order."
+        )
+    return base[:start] + replacement + base[end:]
+
+
+_EXPERIMENTAL_PLANNER_PACING = """# PACING - FOLLOW THE SCENE, NOT A TEMPLATE
+1. Protect the pace of major revelations: reveal at most one core mystery (such as a culprit, motive or faction) in a turn. Never solve several mysteries with one convenient recording, diary, artifact or exposition dump. Let players investigate and ask follow-up questions when the scene calls for them.
+2. Treat world_config.pacing_level as a broad preference, not a count of sub-beats or turns per checkpoint. A deadline or event still follows its established causes and timing; a quiet scene need not manufacture progress toward the checkpoint.
+3. Let characters share information at a natural conversational pace. Do not split a coherent answer across turns just because it exceeds an arbitrary sentence count; do not deliver an entire mystery as a monologue either.
+4. Friction is one option among several, not a per-turn requirement. Do NOT manufacture an obstacle, a complication, a cliffhanger, a threat, a mysterious stranger or an ominous omen merely to fill a turn. Reserve real friction for moments the scene itself earns; a scene that has none should be planned with none.
+5. Let the scene set its own length and speed. A small action deserves a short, concrete answer: plan what actually happens in response to it, not a long scene built around restating what the player just did. Some turns advance the plot, some deepen a relationship, some are rest, some are texture. Uneven progression is the point - there is no fixed number of sub-beats to hit, no fixed amount to write, and no requirement that a turn end on tension.
+   - Everyday conversation, humour, a shared meal, a stretch of rest, a relationship getting easier or harder are all legitimate beats. Make them specific and worth reading rather than filler.
+   - A quiet beat is not a failed beat. If nothing dramatic happens, plan something small and human instead: a habit, a joke that lands or does not, a decision, a detail of place.
+   - This relaxes how often tension appears, never whether the world is real. Its rules, dangers, deadlines and consequences still apply in full.
+6. Give every present NPC their own motives and let them act on them. Two characters in the same room should not want the same thing or react the same way; plan distinct, concrete reactions instead of a chorus that agrees with the player.
+"""
+
+EXPERIMENTAL_PLANNER_SYSTEM_PROMPT = _swap_section(
+    PLANNER_SYSTEM_PROMPT,
+    "# PACING DISCIPLINE\n",
+    "# EVENT OUTCOMES \u2014 OPEN RESOLUTION, HONEST PREMISES\n",
+    _EXPERIMENTAL_PLANNER_PACING,
+    "planner (pacing)",
+)
+
+# The engine's keyword checker accepts an empty list. Requiring decorative
+# keywords in every quiet turn can make prose repeat a motif or insert an
+# unnatural phrase, so the experimental planner only anchors details that
+# truly must survive the hand-off to the writer.
+EXPERIMENTAL_PLANNER_SYSTEM_PROMPT = _swap_section(
+    EXPERIMENTAL_PLANNER_SYSTEM_PROMPT,
+    '6. "anchor_keywords": An array of 2-4',
+    '7. "open_threads_update":',
+    '6. "anchor_keywords": An array of 0-2 concrete names or details that MUST appear verbatim in chapter_text only when needed to preserve an essential fact. Use [] for a turn with no such anchors; never require decorative motifs or words merely to fill a quota.\n',
+    "planner (anchors)",
+)
+_EXPERIMENTAL_ANCHOR_EXAMPLE = '"anchor_keywords": ["keyword1", "keyword2", "keyword3"],'
+if EXPERIMENTAL_PLANNER_SYSTEM_PROMPT.count(_EXPERIMENTAL_ANCHOR_EXAMPLE) != 1:
+    raise RuntimeError("Cannot build experimental planner prompt: anchor example has changed.")
+EXPERIMENTAL_PLANNER_SYSTEM_PROMPT = EXPERIMENTAL_PLANNER_SYSTEM_PROMPT.replace(
+    _EXPERIMENTAL_ANCHOR_EXAMPLE, '"anchor_keywords": [],', 1
+)
+_EXPERIMENTAL_BOUNDARY_EXAMPLE = '"boundary_check": "Brief explanation of scope compliance or the in-story obstacle used",'
+if EXPERIMENTAL_PLANNER_SYSTEM_PROMPT.count(_EXPERIMENTAL_BOUNDARY_EXAMPLE) != 1:
+    raise RuntimeError("Cannot build experimental planner prompt: boundary example has changed.")
+EXPERIMENTAL_PLANNER_SYSTEM_PROMPT = EXPERIMENTAL_PLANNER_SYSTEM_PROMPT.replace(
+    _EXPERIMENTAL_BOUNDARY_EXAMPLE,
+    '"boundary_check": "Brief explanation of scope compliance or any real obstacle encountered",',
+    1,
+)
+
+# An "ongoing" ledger entry is unresolved history, not a ticking clock. The
+# classic instructions turn every such entry into a per-turn obligation, which
+# can make an ordinary scene invent urgency even when story_clock has none.
+_CLASSIC_PLANNER_THREAD_RULE = '    - tier_4_thread_ledger (open_threads, foreshadowing_tracker): Verify no active thread or foreshadowing hint is neglected; advance or resolve them within deadlines. CRITICAL:'
+_EXPERIMENTAL_PLANNER_THREAD_RULE = '    - tier_4_thread_ledger (open_threads, foreshadowing_tracker): Use these for continuity, not as a per-turn checklist. "ongoing" means no deadline. Only a deadline established by story state may create time pressure. If the player deliberately leaves an offer, message, or mystery unanswered, preserve that choice without bringing it back as a final-line reminder; an unchanged thread may stay entirely offstage. CRITICAL:'
+if EXPERIMENTAL_PLANNER_SYSTEM_PROMPT.count(_CLASSIC_PLANNER_THREAD_RULE) != 1:
+    raise RuntimeError("Cannot build experimental planner prompt: thread rule has changed.")
+EXPERIMENTAL_PLANNER_SYSTEM_PROMPT = EXPERIMENTAL_PLANNER_SYSTEM_PROMPT.replace(
+    _CLASSIC_PLANNER_THREAD_RULE, _EXPERIMENTAL_PLANNER_THREAD_RULE, 1
+)
+
+
+_EXPERIMENTAL_WRITER_LENGTH = """8. Let the scene decide the length. "words_per_turn_target" is a rough average for this world, not a quota: a short exchange can be short, a dense set-piece can run long, and a domestic or transitional beat must not be padded to reach a number. Never restate the player's input back to them as narration - answer it. A small action deserves a clear, concrete response, not a paragraph paraphrasing what they just said. You also decide whether this turn is a natural point to close the current chapter (a scene ends, time skips forward, a location changes, or an emotional/narrative beat resolves): set "chapter_end": true when it is, "chapter_end": false otherwise. Do not manufacture a cliffhanger, a looming threat or an ominous closing line in order to end a turn. Do not end a quiet turn by recapping an unchanged offer, deadline, danger, or mystery from memory; if the player leaves it alone, the prose can leave it alone too. A chapter may close on something quiet, funny or simply finished, just as it may stay open through a beat that happens to be dramatic.
+"""
+
+_EXPERIMENTAL_WRITER_STYLE_CARD = """11. If the payload contains a "style_card", treat it as this world's baseline voice, not a template every scene must copy. Keep "perspective" and "voice" consistent, obey all "prose_guidelines", NEVER use any word or phrase listed in "taboo_words" anywhere in "chapter_text", and follow any additional instructions in "custom_instructions". Where the card describes "pacing" or "tone", let the scene's own nature adjust the rhythm - a family scene, a dream, a joke and a life-or-death moment should not all be paced identically - while the world and its characters still sound like themselves.
+"""
+
+_EXPERIMENTAL_WRITER_NPC_VOICE = """16. When a scene involves more than one character present and aware of each other, prefer showing their exchange through actual spoken dialogue rather than only narration or internal summary of what was said. Each present character speaks and acts from their own motives and knowledge: give them different wants, different reactions and their own voice, and never let a group of NPCs agree with the player in unison or answer as one. Use dialogue naturally where it serves the scene; do not force it into solitary or introspective scenes that do not call for it.
+"""
+
+_EXPERIMENTAL_WRITER_BLUEPRINT = """14. The payload includes "scene_outline" (a 2-4 sentence blueprint from the planner) and "facts_this_turn" (an array of concrete factual statements). You MUST follow "scene_outline" as the structure for this turn's events, and you MUST incorporate every item in "facts_this_turn" into the prose. These override any other creative impulse — if "scene_outline" says something specific happens, it must happen exactly as described. The optional "anchor_keywords" list contains at most two essential names or details; if present, weave each into chapter_text exactly as written, without turning them into a checklist. An empty list imposes no wording requirement.
+"""
+
+_EXPERIMENTAL_WRITER_OPENING = """22. If opening_setup is true, write only the situation immediately before the first consequential event. Do not complete a selection, binding, attack, death, or other irreversible event before the player has acted. End at a concrete, playable moment where the player can choose what to do next; an ordinary conversation, small errand or quiet observation is enough. Do not introduce a job offer, threat, omen or cliffhanger solely to make the opening feel actionable.
+"""
+
+
+def _build_experimental_writer_prompt() -> str:
+    prompt = _swap_section(
+        WRITER_SYSTEM_PROMPT,
+        "8. Write enough prose to meaningfully advance this beat",
+        '9. Only when "chapter_end" is true',
+        _EXPERIMENTAL_WRITER_LENGTH,
+        "writer (length)",
+    )
+    prompt = _swap_section(
+        prompt,
+        '11. If the payload contains a "style_card"',
+        '12. If the story naturally requires a new character',
+        _EXPERIMENTAL_WRITER_STYLE_CARD,
+        "writer (style card)",
+    )
+    prompt = _swap_section(
+        prompt,
+        '14. The payload includes "scene_outline"',
+        '15. The payload includes "multi_tier_context"',
+        _EXPERIMENTAL_WRITER_BLUEPRINT,
+        "writer (optional anchors)",
+    )
+    prompt = _swap_section(
+        prompt,
+        "16. When a scene involves more than one character present",
+        '17. The payload includes "action_resolution"',
+        _EXPERIMENTAL_WRITER_NPC_VOICE,
+        "writer (npc voice)",
+    )
+    prompt = _swap_section(
+        prompt,
+        "22. If opening_setup is true",
+        "23. The payload's story_clock",
+        _EXPERIMENTAL_WRITER_OPENING,
+        "writer (opening)",
+    )
+    classic_thread_rule = '    - tier_4_thread_ledger: Active narrative threads with their resolution deadlines (open_threads) and foreshadowing hints (foreshadowing_tracker). Advance or resolve threads and hints naturally; do not let deadlines expire without narrative consequence.'
+    experimental_thread_rule = '    - tier_4_thread_ledger: Unresolved threads and foreshadowing hints are continuity, not a checklist for this turn. "ongoing" means there is no deadline; do not imply one or pull a thread into a quiet scene solely because it is listed. Honor only time pressure actually established by the story state.'
+    if prompt.count(classic_thread_rule) != 1:
+        raise RuntimeError("Cannot build experimental writer prompt: thread rule has changed.")
+    prompt = prompt.replace(classic_thread_rule, experimental_thread_rule, 1)
+    schema = '  "draft_entities": [{"type": "char", "name": "New NPC", "description": "Who they are"}]'
+    if prompt.count(schema) != 1:
+        raise RuntimeError("Cannot build experimental writer prompt: output schema has changed.")
+    prompt = prompt.replace(
+        schema,
+        '  "draft_entities": [{"type": "char", "name": "New NPC", "description": "Who they are"}],\n'
+        '  "suggested_actions": ["A genuinely still-open next action after chapter_text ends"]',
+        1,
+    )
+    prompt = prompt.replace(
+        'EXACT JSON STRUCTURE TO RETURN:',
+        'After finishing chapter_text, generate 1-4 suggested_actions from its FINAL state. '
+        'Do not suggest an action that chapter_text already completed (eating, traveling, opening an item, '
+        'asking a question). If no useful action remains, return []. These replace planner suggestions, '
+        'which were drafted before the scene existed.\n\nEXACT JSON STRUCTURE TO RETURN:',
+        1,
+    )
+    return prompt
+
+
+EXPERIMENTAL_WRITER_SYSTEM_PROMPT = _build_experimental_writer_prompt()

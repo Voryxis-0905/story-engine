@@ -6,6 +6,7 @@ from app.llm_client import mock_consistency_checker_response
 from app.llm_client import parse_llm_json
 from app.prompts import CONSISTENCY_CHECKER_SYSTEM_PROMPT
 from app.prompts import EXTRACTOR_SYSTEM_PROMPT
+from app.story.checkpoint_context import playable_checkpoint_description
 import json
 from app.world.calendar_clock import advance_story_clock, normalize_elapsed_time
 
@@ -87,11 +88,21 @@ def build_consistency_checker_payload(chapter_text: str, state_changes: dict,
                          else travel.get("stopped_at") if travel.get("status") == "interrupted"
                          else protagonist_after.get("location") if isinstance(protagonist_after, dict)
                          else None)
+
+    def clock_label(clock: dict) -> str:
+        if not isinstance(clock, dict):
+            return ""
+        minute = clock.get("minute_of_day")
+        if not isinstance(minute, int):
+            return ""
+        date = "-".join(str(clock.get(part, "?")) for part in ("year", "month", "day"))
+        return f"{date} {minute // 60:02d}:{minute % 60:02d}"
+
     return {
         "fixed_rules": world_config.get("fixed_rules", []),
         "trait_definitions": world_config.get("trait_definitions", {}),
         "titles": world_config.get("titles", []),
-        "current_checkpoint_description": checkpoint.get("description", ""),
+        "current_checkpoint_description": playable_checkpoint_description(checkpoint),
         "active_cards": [
             {"id": c["id"], "type": c["type"], "name": c["name"], "content": c["content"]}
             for c in active_cards
@@ -103,6 +114,7 @@ def build_consistency_checker_payload(chapter_text: str, state_changes: dict,
         "temporal_spatial_alignment": {
             "clock_at_turn_start": start_clock,
             "clock_after_proposed_turn": end_clock,
+            "clock_window_local": f"{clock_label(start_clock)} → {clock_label(end_clock)}",
             "calendar": world_config.get("calendar"),
             "protagonist_location_before": protagonist_before.get("location") if isinstance(protagonist_before, dict) else None,
             "protagonist_location_after_proposed_turn": expected_location or (

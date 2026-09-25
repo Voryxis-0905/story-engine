@@ -15,6 +15,7 @@ MANDATORY RULES:
 6. "noticed_opportunities": Array of opportunities they perceive (0-3 items).
 7. "impression_of_others": Object mapping other character IDs to a short impression (e.g. {"char_2": "seems nervous and evasive"}).
 8. "decision": A short phrase describing what they are inclined to do next (e.g. "approach cautiously", "stay back and observe", "intervene immediately").
+9. Read the entire chapter_text through its final sentence before describing what remains to do. Do not claim that a character has not eaten, spoken, arrived, or finished an action if the scene shows they did. An opportunity or decision must still be open AFTER the scene ends; a completed meal or completed conversation is not a future goal. The character may misunderstand another person's motives, but not erase an observable action they witnessed.
 
 Write in the same language as the chapter_text provided in the payload.
 
@@ -44,6 +45,7 @@ MANDATORY RULES:
 7. "trust_updates": Object mapping other character IDs to trust delta values (float -1.0 to 1.0).
 8. "mood": A single word or short phrase describing their new mood (e.g. "tense", "hopeful", "gloomy", "determined").
 9. "goal_updates": Array of new goals to add (or empty array if none).
+10. Ground each update in the FINAL state of chapter_text. Do not add a goal to perform an action that the scene has already completed, even if the earlier perception_data called it an opportunity. If perception_data conflicts with the observed chapter_text, trust the observed scene for what visibly happened while preserving uncertainty about motives.
 
 Base the updates strictly on what actually happened in the chapter and the character's perception — do not invent events.
 

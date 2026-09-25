@@ -1,5 +1,19 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
+/**
+ * Narrative guidance profile for a generated turn.
+ *
+ * `classic` is the default and is sent by *omitting* the field: a request that
+ * never mentions a mode takes exactly the path it took before this option
+ * existed. `experimental` opts a single turn into the alternative
+ * planner/writer guidance; it changes only narrative guidance, never the
+ * engine's rules, and it does not add any model calls.
+ */
+export type NarrationMode = 'classic' | 'experimental';
+
+/** The only value worth sending; `classic` means "leave the field out". */
+export const EXPERIMENTAL_NARRATION_MODE: NarrationMode = 'experimental';
+
 export interface World {
   name: string;
   status?: string;
@@ -124,6 +138,8 @@ export interface TimeSkipRequest {
   force?: boolean;
   request_id?: string;
   expected_revision?: number;
+  /** Read only when the skip generates a turn; the preview ignores it. */
+  narration_mode?: NarrationMode;
 }
 
 export interface TimeSkipPreview {
@@ -165,6 +181,7 @@ export interface ChapterContinueResponse {
 export interface ChapterStartRequest {
   opening_mode?: 'ai_generate' | 'user_defined';
   opening_text?: string;
+  narration_mode?: NarrationMode;
 }
 
 export interface LintChapterRequest {
@@ -259,7 +276,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
       }),
-    continue: (worldName: string, userInput: string, opts?: { requestId?: string; expectedRevision?: number }) =>
+    continue: (worldName: string, userInput: string, opts?: { requestId?: string; expectedRevision?: number; narrationMode?: NarrationMode }) =>
       fetchJSON<ChapterContinueResponse>(`/worlds/${worldName}/chapter/continue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -267,6 +284,9 @@ export const api = {
           user_input: userInput,
           request_id: opts?.requestId,
           expected_revision: opts?.expectedRevision,
+          // Left undefined in classic mode, so the default request body is
+          // unchanged from before this option existed.
+          narration_mode: opts?.narrationMode,
         }),
       }),
     previewTimeSkip: (worldName: string, req: TimeSkipRequest) =>
@@ -277,13 +297,14 @@ export const api = {
       fetchJSON<ChapterContinueResponse>(`/worlds/${worldName}/time-skip/execute`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req),
       }),
-    regenerate: (worldName: string, opts?: { requestId?: string; expectedRevision?: number }) =>
+    regenerate: (worldName: string, opts?: { requestId?: string; expectedRevision?: number; narrationMode?: NarrationMode }) =>
       fetchJSON<any>(`/worlds/${worldName}/chapter/regenerate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           request_id: opts?.requestId,
           expected_revision: opts?.expectedRevision,
+          narration_mode: opts?.narrationMode,
         }),
       }),
     endgameStatus: (worldName: string) =>

@@ -10,6 +10,8 @@ from app.prompts.editing import LINTER_SYSTEM_PROMPT
 from app.prompts.editing import REWRITE_SYSTEM_PROMPT
 from app.prompts.editing import SUMMARIZER_SYSTEM_PROMPT
 from app.prompts.narration import EXTRACTOR_SYSTEM_PROMPT
+from app.prompts.narration import EXPERIMENTAL_PLANNER_SYSTEM_PROMPT
+from app.prompts.narration import EXPERIMENTAL_WRITER_SYSTEM_PROMPT
 from app.prompts.narration import PLANNER_SYSTEM_PROMPT
 from app.prompts.narration import WRITER_SYSTEM_PROMPT
 from app.prompts.psychology import PSYCHOLOGY_PERCEPTION_PROMPT

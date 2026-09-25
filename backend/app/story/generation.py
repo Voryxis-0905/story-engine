@@ -6,8 +6,9 @@ from app.llm_client import call_llm
 from app.llm_client import parse_llm_json
 from app.models import StateChangesModel
 from app.prompts import EDITOR_SYSTEM_PROMPT
-from app.prompts import PLANNER_SYSTEM_PROMPT
-from app.prompts import WRITER_SYSTEM_PROMPT
+from app.story.narration_mode import select_planner_prompt
+from app.story.narration_mode import select_writer_prompt
+from app.story.narration_mode import is_experimental
 from fastapi import HTTPException
 from pydantic import ValidationError
 from typing import List
@@ -27,10 +28,11 @@ def check_anchor_keywords(chapter_text: str, anchor_keywords: List[str]) -> List
     return missing
 
 
-def call_planner_stage(payload: dict, user_input_for_mock: str, world_name: str = None) -> dict:
+def call_planner_stage(payload: dict, user_input_for_mock: str, world_name: str = None,
+                       narration_mode=None) -> dict:
     try:
         planner_raw = call_llm(
-            PLANNER_SYSTEM_PROMPT,
+            select_planner_prompt(narration_mode),
             json.dumps(payload, ensure_ascii=False),
             user_input_for_mock=user_input_for_mock,
             world_name=world_name,
@@ -76,6 +78,12 @@ def call_planner_stage(payload: dict, user_input_for_mock: str, world_name: str 
     anchor_keywords = planner_parsed.get("anchor_keywords", [])
     if not isinstance(anchor_keywords, list):
         anchor_keywords = []
+    # Provider JSON can contain numbers or objects even when the prompt asks
+    # for strings. Those must never reach check_anchor_keywords (which uses
+    # string operations); valid classic keywords retain their original shape.
+    anchor_keywords = [kw for kw in anchor_keywords if isinstance(kw, str) and kw.strip()]
+    if is_experimental(narration_mode):
+        anchor_keywords = anchor_keywords[:2]
     open_threads_update = planner_parsed.get("open_threads_update", "")
     if not isinstance(open_threads_update, str):
         open_threads_update = ""
@@ -104,16 +112,27 @@ def call_writer_stage(payload: dict, scene_outline: str, facts_this_turn: list,
                       anchor_keywords: list, open_threads_update: str,
                       is_ooc: bool, action_translation: str,
                       effective_user_input: str,
-                      world_name: str = None, editor_enabled: bool = False):
+                      world_name: str = None, editor_enabled: bool = False,
+                      narration_mode=None):
     writer_payload = dict(payload)
     writer_payload["scene_outline"] = scene_outline
     writer_payload["facts_this_turn"] = facts_this_turn
     writer_payload["planned_state_changes"] = state_changes
+    if is_experimental(narration_mode):
+        # The classic writer payload remains untouched. In the experimental
+        # profile, rare essential anchors are actually visible to the writer
+        # instead of only being checked after generation.
+        writer_payload["anchor_keywords"] = anchor_keywords
+
+    # Resolved once and reused by every writer call below (first draft, format
+    # retry, keyword retry). A retry that quietly reverted to the classic prompt
+    # would make the switch unreliable exactly when the model is struggling.
+    writer_system_prompt = select_writer_prompt(narration_mode)
 
     def call_writer_once(payload_for_call: dict) -> str:
         try:
             return call_llm(
-                WRITER_SYSTEM_PROMPT,
+                writer_system_prompt,
                 json.dumps(payload_for_call, ensure_ascii=False),
                 user_input_for_mock=effective_user_input,
                 world_name=world_name,
@@ -168,6 +187,8 @@ def call_writer_stage(payload: dict, scene_outline: str, facts_this_turn: list,
     if writer_state_changes is not None and isinstance(writer_state_changes, dict):
         state_changes = writer_state_changes
 
+    suggestion_source = writer_parsed
+
     keyword_missing = check_anchor_keywords(chapter_text, anchor_keywords)
     if keyword_missing:
         logger.warning(
@@ -185,7 +206,7 @@ def call_writer_stage(payload: dict, scene_outline: str, facts_this_turn: list,
                 )
                 try:
                     retry_raw = call_llm(
-                        WRITER_SYSTEM_PROMPT,
+                        writer_system_prompt,
                         json.dumps(retry_payload, ensure_ascii=False),
                         user_input_for_mock=effective_user_input,
                         world_name=world_name,
@@ -194,6 +215,7 @@ def call_writer_stage(payload: dict, scene_outline: str, facts_this_turn: list,
                     retry_parsed = parse_llm_json(retry_raw)
                     retry_text = retry_parsed.get("chapter_text", "")
                     if retry_text:
+                        suggestion_source = retry_parsed
                         chapter_text = retry_text
                         chapter_end = bool(retry_parsed.get("chapter_end", chapter_end))
                         chapter_title = retry_parsed.get("chapter_title") or chapter_title
@@ -241,12 +263,22 @@ def call_writer_stage(payload: dict, scene_outline: str, facts_this_turn: list,
     if not isinstance(perception_data, dict):
         perception_data = {}
 
+    if is_experimental(narration_mode):
+        # Planner suggestions precede the actual scene and can name actions the
+        # writer already completed. An omitted writer field is safer as no
+        # quick actions than as misleading, stale quick actions.
+        final_suggestions = suggestion_source.get("suggested_actions", [])
+        suggested_actions = ([item.strip() for item in final_suggestions
+                              if isinstance(item, str) and item.strip()][:4]
+                             if isinstance(final_suggestions, list) else [])
+
     return chapter_text, state_changes, chapter_end, chapter_title, suggested_actions, draft_entities, editor_polished, anchor_keywords, open_threads_update, is_ooc, action_translation, keyword_missing, steps, variants, perception_data
 
 
 def call_narrator_and_parse(payload: dict, user_input_for_mock: str, world_name: str = None,
-                            editor_enabled: bool = False):
-    planner_out = call_planner_stage(payload, user_input_for_mock, world_name)
+                            editor_enabled: bool = False, narration_mode=None):
+    planner_out = call_planner_stage(payload, user_input_for_mock, world_name,
+                                     narration_mode=narration_mode)
     return call_writer_stage(
         payload,
         planner_out["scene_outline"], planner_out["facts_this_turn"],
@@ -254,5 +286,6 @@ def call_narrator_and_parse(payload: dict, user_input_for_mock: str, world_name:
         planner_out["anchor_keywords"], planner_out["open_threads_update"],
         planner_out["is_ooc"], planner_out["action_translation"],
         planner_out["effective_user_input"],
-        world_name=world_name, editor_enabled=editor_enabled
+        world_name=world_name, editor_enabled=editor_enabled,
+        narration_mode=narration_mode
     )

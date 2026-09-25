@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../../api/client';
-import type { InventoryItem, PlayState, TravelPreview, TimeSkipRequest, TimeSkipPreview } from '../../api/client';
+import type { InventoryItem, PlayState, TravelPreview, TimeSkipRequest, TimeSkipPreview, NarrationMode } from '../../api/client';
 import type { DrawerTab, Turn, PlayDraft } from './types';
-import { WORLD_RESTORED_EVENT, DRAFT_STORAGE_PREFIX } from './types';
+import { WORLD_RESTORED_EVENT, DRAFT_STORAGE_PREFIX, narrationModeStorageKey } from './types';
 
 export type OutputLength = 'short' | 'medium' | 'long';
 
@@ -47,6 +47,11 @@ export function usePlaySession(worldName: string) {
 
   // Controls
   const [outputLength, setOutputLengthState] = useState<OutputLength>('medium');
+
+  // Experimental pacing. Off unless this world's stored preference says
+  // otherwise; the server also defaults to the classic path when a request
+  // carries no mode, so the two defaults agree.
+  const [narrationMode, setNarrationModeState] = useState<NarrationMode>('classic');
 
   // Sidebar collapse
   const [sidebarOpen, setSidebarOpen] = useState(sidebarStartsOpen);
@@ -145,6 +150,52 @@ export function usePlaySession(worldName: string) {
       /* sessionStorage may be unavailable (private mode, quota) — drafts are best-effort. */
     }
   }, [worldName]);
+
+  /**
+   * Read this world's stored pacing preference.
+   *
+   * Read per world, on world change, so switching to another world shows that
+   * world's own setting instead of carrying this one over. Anything other than
+   * the stored opt-in value reads as off.
+   */
+  const readStoredNarrationMode = useCallback((name: string): NarrationMode => {
+    try {
+      return localStorage.getItem(narrationModeStorageKey(name)) === 'experimental'
+        ? 'experimental'
+        : 'classic';
+    } catch {
+      return 'classic';
+    }
+  }, []);
+
+  const setNarrationMode = (value: NarrationMode) => {
+    setNarrationModeState(value);
+    try {
+      if (value === 'experimental') {
+        localStorage.setItem(narrationModeStorageKey(worldName), 'experimental');
+      } else {
+        // Off is the absence of a key, so "never touched" and "turned back off"
+        // read the same way on the next visit.
+        localStorage.removeItem(narrationModeStorageKey(worldName));
+      }
+    } catch {
+      /* The preference is best-effort; the in-memory value still applies. */
+    }
+  };
+
+  /**
+   * The mode to send with a generation request.
+   *
+   * Classic mode sends nothing at all: the default request body stays exactly
+   * what it was before this option existed, which is what keeps the old path
+   * provably unchanged. Two shapes because the API client takes camelCase
+   * options for `continue`/`regenerate` and a snake_case body for `start` and
+   * the time-skip execute call.
+   */
+  const modeOpts = () =>
+    narrationMode === 'experimental' ? { narrationMode: 'experimental' as const } : {};
+  const modeBody = () =>
+    narrationMode === 'experimental' ? { narration_mode: 'experimental' as const } : {};
 
   useEffect(() => {
     // Scroll the transcript column itself, never `scrollIntoView`.
@@ -268,6 +319,9 @@ export function usePlaySession(worldName: string) {
     setAffinityGraph({ nodes: [], edges: [] });
     setPreludeText(null);
     setDraft(readStoredDraft(worldName));
+    // The pacing switch is per world: read this world's own preference rather
+    // than keeping whatever the previous world had selected.
+    setNarrationModeState(readStoredNarrationMode(worldName));
     setQuests([]);
     setJournal([]);
     setEpilogueChoices([]);
@@ -290,7 +344,7 @@ export function usePlaySession(worldName: string) {
       loadExistingChapters();
       loadDiscovery();
     }
-  }, [worldName, readStoredDraft, loadPlayState, loadMap, loadAffinityGraph, loadExistingChapters, loadDiscovery]);
+  }, [worldName, readStoredDraft, readStoredNarrationMode, loadPlayState, loadMap, loadAffinityGraph, loadExistingChapters, loadDiscovery]);
 
   // A creator restore can happen outside this screen; refresh committed data.
   useEffect(() => {
@@ -333,6 +387,7 @@ export function usePlaySession(worldName: string) {
       const res = await api.play.continue(worldName, userInput, {
         requestId: options.requestId,
         expectedRevision: revisionRef.current,
+        ...modeOpts(),
       });
       if (token !== worldTokenRef.current) return;
       if (typeof res?.revision === 'number') {
@@ -487,7 +542,7 @@ export function usePlaySession(worldName: string) {
     setError(null);
     try {
       const res = await api.play.executeTimeSkip(worldName, {
-        ...request, request_id: requestId, expected_revision: revisionRef.current,
+        ...request, request_id: requestId, expected_revision: revisionRef.current, ...modeBody(),
       });
       if (token !== worldTokenRef.current) return;
       if (typeof res?.revision === 'number') revisionRef.current = res.revision;
@@ -538,16 +593,15 @@ export function usePlaySession(worldName: string) {
     setLoading(true);
     setError(null);
     try {
-      // A confirmed prelude advances the checkpoint before Chapter 1 exists.
-      // Check committed chapters, not arc progress, or Begin Story becomes a
-      // no-op whenever a world starts from cp_0.
+      // A prelude is Chapter 0, not a played checkpoint. Check committed
+      // chapters, not arc progress, so Begin Story still starts Chapter 1.
       const chapters = await api.play.getChapters(worldName);
       if (token !== worldTokenRef.current) return;
       if (chapters?.some((chapter) => chapter.chapter_index !== 0)) {
         await loadExistingChapters();
         return;
       }
-      const res = await api.play.start(worldName, { opening_mode: 'ai_generate' });
+      const res = await api.play.start(worldName, { opening_mode: 'ai_generate', ...modeBody() });
       if (token !== worldTokenRef.current) return;
       if (res?.chapter?.chapter_text) {
         setTurns([{
@@ -586,6 +640,7 @@ export function usePlaySession(worldName: string) {
       const res = await api.play.regenerate(worldName, {
         requestId,
         expectedRevision: revisionRef.current,
+        ...modeOpts(),
       });
       if (token !== worldTokenRef.current) return;
       if (typeof res?.revision === 'number') {
@@ -668,7 +723,7 @@ export function usePlaySession(worldName: string) {
       if (token !== worldTokenRef.current) return;
       setPreludeText(null);
       // After confirming prelude, start the first chapter
-      const res = await api.play.start(worldName, { opening_mode: 'ai_generate' });
+      const res = await api.play.start(worldName, { opening_mode: 'ai_generate', ...modeBody() });
       if (token !== worldTokenRef.current) return;
       if (res?.chapter?.chapter_text) {
         setTurns([{
@@ -704,7 +759,7 @@ export function usePlaySession(worldName: string) {
   const clock = playState?.story_clock || {};
   const calendar = playState?.calendar || null;
 
-  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handlePreviewTravel, travelPreview, previewLoading, handleTravelTo, handleItemAction, handleContinueJourney, handleAbandonJourney, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock, calendar };
+  return { playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, narrationMode, setNarrationMode, sidebarOpen, setSidebarOpen, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, activeDrawer, setActiveDrawer, locations, affinityGraph, preludeText, draft, handleDismissDraft, handleRetryDraft, quests, journal, epilogue: playState?.epilogue || null, lifecycleStatus: playState?.lifecycle_status || 'active', epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, handlePreviewTravel, travelPreview, previewLoading, handleTravelTo, handleItemAction, handleContinueJourney, handleAbandonJourney, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude, protagonist, arc, clock, calendar };
 }
 
 export type PlaySession = ReturnType<typeof usePlaySession>;

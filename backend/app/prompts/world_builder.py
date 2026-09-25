@@ -29,14 +29,15 @@ Task: read the user's input (idea, genre, power system, tone, pacing) and GENERA
 MANDATORY RULES:
 1. Return raw JSON only — no markdown, no code fences, no preamble or closing remarks.
 2. The JSON must have exactly these top-level keys: "world_config", "checkpoints".
-3. The first checkpoint must have id "cp_0", empty required_conditions ([]).
+3. The first checkpoint must have id "cp_0", empty required_conditions ([]). It is the first PLAYABLE chapter after any optional prelude, not a disposable prologue marker. A prelude sets the scene; it does not complete cp_0 or make its events happen. Put the opening's ordinary-life situation and first player choices in cp_0, and later consequences in later checkpoints.
 4. SCOPE & PACING RULES:
    - If Scope is "one-shot": Generate 2-4 checkpoints for a single short event. Resolve the issue by the end.
    - If Scope is "arc-only": Generate 4-7 checkpoints for a single focused arc.
    - If Scope is "full-story": Generate 5-7 checkpoints for **ARC 1 ONLY** (The Opening Arc). You MUST also include an "arc_roadmap" object inside "world_config" containing a macro-outline of all future arcs (e.g., arc_1, arc_2, arc_3). Do NOT resolve the ultimate world secrets in Arc 1. Ensure the pacing matches the user's preference (e.g., for Slow-burn, focus heavily on world-building and gradual tension in Arc 1).
 5. CHECKPOINT PHILOSOPHY — Every checkpoint description must frame the location as a place the character has INTERNAL MOTIVATION to be, NOT a cage they are trapped in. For example: "the protagonist stays in the Shadow Market because they need information from a contact there" instead of "the protagonist cannot leave the Shadow Market because guards block all exits." The character should CHOOSE to be in this area (to pursue a goal, investigate, recuperate, wait for someone/something). Only use literal barriers when the world's premise genuinely restricts the character (e.g. the protagonist is a prisoner, or bound by a magical contract). Also, when writing checkpoint "boundary.locations", use zone-prefixed names (e.g. "Valdris Estate - Kitchen", "Valdris Estate - Garden") to allow natural movement within the same area without triggering boundary violations.
+   Treat the user's idea as design material, NOT as a transcript of decisions the player has already made. "He accepts the contract", "she falls in love", "they enter the Gate" are possible developments unless already established as opening canon. Do not write a future player choice as an inevitable fact.
 6. Write "display_name", "genre", "power_system", "tone", "fixed_rules", and every checkpoint "description" in the same language the user used in their interview answers / initial prompt. If that language can't be determined, default to English. This keeps world metadata in the same language as the chapters that will later be generated from it.
-7. Generate a 1-2 sentence "story_thesis" that summarizes what this story is fundamentally about. This will act as the narrative anchor for future arcs.
+7. Generate a 1-2 sentence "story_thesis" about the story's theme and central tension, not a list of future plot events or hidden revelations. This is sent to the turn narrator as an anchor, so do not reveal a secret there merely because the user's concept mentioned it.
 8. Based on the user's interview answers (provided in the prompt as "Q&A Clarifications"), infer and set the following fields inside "world_config":
    - "pacing_level": one of "Slowburn" (atmospheric, gradual), "Balanced", or "Fast" (rapid progression).
    - "pov_angle": one of "1st_person" (protagonist's "I" narration), "3rd_person_limited" (stays close to protagonist), or "3rd_person_omniscient" (full access to all characters' thoughts).
@@ -67,6 +68,16 @@ MANDATORY RULES:
      * `story_clock.year`, `story_clock.month`, `story_clock.day` — integer date fields
      * `<char_id>.traits.<trait_name>` — string trait value
    - NEVER invent field paths like `<char_id>.stats.something` or `<char_id>.affinity.<other_id>` — those DO NOT exist and will cause the condition to silently fail forever.
+10. SEPARATE DESIGN HORIZON FROM PLAYABLE CONTEXT for EVERY checkpoint, without extra model calls:
+   - "description" is a short creator-facing overview of this story opportunity. It may mention intended pressure or a possible outcome, but mark uncertain outcomes as conditional rather than established history.
+   - "playable_situation" is the present-tense situation WHEN this checkpoint becomes active: where the protagonist is, what observable people want, what has actually happened, and what choice remains open. The turn narrator will receive THIS FIELD instead of "description". Do not include later twists, promised endings, future arrivals, or an action the player has not chosen. Keep it useful for multiple ordinary turns, not a script to finish in one turn.
+     Every asserted arrival, relationship, accepted offer, acquired object, or elapsed date here must be guaranteed by this checkpoint's required_conditions or by fixed opening canon. If the player could reach the checkpoint by another path, describe the shared situation without assuming one path occurred. cp_0 must agree with world_config.story_clock and the protagonist's initial location; later checkpoints must not teleport the protagonist merely to start a planned scene.
+   - "possible_developments" is a short array of conditional paths for the creator/arc logic, including major beats from the user's idea. Phrase each as "If/when ..."; at least one path should respect delay, refusal, failure, or a different player choice. This array is NOT sent to the turn narrator as a per-turn task list.
+   - "entry_location" is null unless the playable_situation requires the PROTAGONIST to have physically arrived at a particular zone. In that case set it to that exact zone name from boundary.locations. The engine will not activate this checkpoint until the protagonist is actually there, even if a time/flag condition is met. Do not use it for an NPC's location, a remote event, or a scene that can begin wherever the protagonist currently is. A later checkpoint must not assume travel happened merely because story_clock.tick increased.
+   - A fixed rule is a world invariant, not a hidden plot answer or an event schedule. Put a secret in a locked lore card later, not in fixed_rules, story_thesis, or playable_situation. Do not invent a countdown unless the concept establishes a concrete clock and consequences.
+   - A time limit spoken by an NPC is a social claim, not an engine-owned deadline. Do not present it as an immutable world event or put it in fixed_rules. If the user did not specify that an offer expires, do not add an expiring offer merely to create pressure; ordinary appointments and the world's clock may still exist.
+   - `story_clock.tick` counts generated turns, NOT days or weeks. Never use a tick threshold to justify "a week later", changed seasons, repeated rain, new rumors, or NPC conversations that have not occurred. A date condition only proves the date; it still does not prove Jun traveled or met someone. Likewise, EXP proves neither that an ability was used nor that a clue was heard. If such a past action has no explicit recorded flag, write the situation as an open possibility ("Jun could try listening") instead of an accomplished fact. Audit each playable_situation sentence against its required_conditions before returning JSON.
+   - `alternate_outcomes` is ENGINE DATA, not an outline: each entry must be an object with a valid next_checkpoint_id and machine-checkable conditions. Put prose sentences such as "If the player refuses, life goes on" in `possible_developments`, never in `alternate_outcomes`. Use [] if no executable branch is defined.
 
 EXACT JSON STRUCTURE TO RETURN:
 {
@@ -95,6 +106,9 @@ EXACT JSON STRUCTURE TO RETURN:
     {
       "checkpoint_id": "",
       "description": "",
+      "playable_situation": "Present-tense situation and open choices only; no future result",
+      "possible_developments": ["If the player chooses this path, a consequence may follow", "If the player delays or refuses, another path remains possible"],
+      "entry_location": null,
       "required_conditions": [],
       "cards_unlocked": [],
       "boundary": {

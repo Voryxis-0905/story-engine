@@ -44,6 +44,7 @@ function chapter(overrides: Record<string, any> = {}) {
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   api.play.state.mockResolvedValue(playState());
   api.play.getChapters.mockResolvedValue([]);
   api.play.continue.mockResolvedValue({ chapter: chapter() });
@@ -540,5 +541,101 @@ describe('usePlaySession not-saved drafts', () => {
     expect(api.play.continue).toHaveBeenCalledWith('WorldA', 'open the door', expect.anything());
     expect(result.current.input).toBe('a different action');
     expect(result.current.turns).toHaveLength(1);
+  });
+});
+
+/**
+ * The experimental pacing switch is opt-in and per world.
+ *
+ * What these tests pin down, and why each one matters:
+ *  - off means the request carries no mode at all, so the default request is
+ *    byte-identical to what it was before the switch existed;
+ *  - on means every entry point that generates prose - a typed action, the
+ *    first chapter, a time skip, a reroll - carries it, so no path quietly
+ *    falls back to the old guidance;
+ *  - the choice is remembered per world across a remount (a page refresh) and
+ *    does not leak into another world.
+ */
+describe('usePlaySession experimental narration mode', () => {
+  const sendOne = async (result: { current: ReturnType<typeof usePlaySession> }, text = 'look around') => {
+    act(() => result.current.setInput(text));
+    await act(async () => { await result.current.handleSend(); });
+  };
+
+  it('sends no narration mode while the switch is off', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+
+    expect(result.current.narrationMode).toBe('classic');
+    await sendOne(result);
+
+    const opts = api.play.continue.mock.calls[0][2];
+    expect(opts).not.toHaveProperty('narrationMode');
+  });
+
+  it('sends the experimental mode for the next turn once switched on', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+
+    act(() => result.current.setNarrationMode('experimental'));
+    await sendOne(result);
+
+    expect(api.play.continue).toHaveBeenCalledWith(
+      'WorldA', 'look around', expect.objectContaining({ narrationMode: 'experimental' }),
+    );
+    expect(result.current.turns).toHaveLength(1);
+  });
+
+  it('carries the mode into chapter start, time skip and reroll', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+    act(() => result.current.setNarrationMode('experimental'));
+
+    await act(async () => { await result.current.handleStartChapter(); });
+    expect(api.play.start).toHaveBeenCalledWith(
+      'WorldA', expect.objectContaining({ narration_mode: 'experimental' }),
+    );
+
+    const skip: any = { amount: 1, unit: 'days', activity: 'Study', interruption_policy: 'important_events' };
+    await act(async () => { await result.current.handleExecuteTimeSkip(skip); });
+    expect(api.play.executeTimeSkip).toHaveBeenCalledWith(
+      'WorldA', expect.objectContaining({ narration_mode: 'experimental' }),
+    );
+
+    await act(async () => { await result.current.handleRegenerate(); });
+    expect(api.play.regenerate).toHaveBeenCalledWith(
+      'WorldA', expect.objectContaining({ narrationMode: 'experimental' }),
+    );
+  });
+
+  it('remembers the switch per world across a remount and leaves other worlds alone', async () => {
+    const first = render('WorldA');
+    await waitFor(() => expect(first.result.current.playState).not.toBeNull());
+    act(() => first.result.current.setNarrationMode('experimental'));
+    expect(first.result.current.narrationMode).toBe('experimental');
+    first.unmount();
+
+    // A remount is what a page refresh looks like from the hook's side.
+    const otherWorld = render('WorldB');
+    await waitFor(() => expect(otherWorld.result.current.playState).not.toBeNull());
+    expect(otherWorld.result.current.narrationMode).toBe('classic');
+    otherWorld.unmount();
+
+    const again = render('WorldA');
+    await waitFor(() => expect(again.result.current.playState).not.toBeNull());
+    expect(again.result.current.narrationMode).toBe('experimental');
+  });
+
+  it('turns the switch back off and stops sending the mode', async () => {
+    const { result } = render();
+    await waitFor(() => expect(api.play.state).toHaveBeenCalled());
+
+    act(() => result.current.setNarrationMode('experimental'));
+    act(() => result.current.setNarrationMode('classic'));
+    await sendOne(result);
+
+    expect(result.current.narrationMode).toBe('classic');
+    expect(api.play.continue.mock.calls[0][2]).not.toHaveProperty('narrationMode');
+    expect(localStorage.getItem('story-engine:narration-mode:WorldA')).toBeNull();
   });
 });

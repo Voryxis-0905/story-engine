@@ -131,6 +131,11 @@ class ChapterContinueRequest(BaseModel):
     user_input: str
     request_id: Optional[str] = None
     expected_revision: Optional[int] = None
+    # Experimental narration profile for this turn. Absent (the default) means
+    # the classic planner/writer guidance, so an older client keeps its exact
+    # previous behaviour. An unknown value is rejected by validation rather than
+    # silently downgraded, so a typo cannot look like "the switch did nothing".
+    narration_mode: Optional[Literal["classic", "experimental"]] = None
 
 
 class TimeSkipRequest(BaseModel):
@@ -142,6 +147,8 @@ class TimeSkipRequest(BaseModel):
     force: bool = False
     request_id: Optional[str] = None
     expected_revision: Optional[int] = None
+    # Only read when a time skip generates a turn; the preview ignores it.
+    narration_mode: Optional[Literal["classic", "experimental"]] = None
 
 
 class TravelPreviewRequest(BaseModel):
@@ -151,6 +158,9 @@ class TravelPreviewRequest(BaseModel):
 class ChapterStartRequest(BaseModel):
     opening_mode: Optional[str] = None
     opening_text: Optional[str] = None
+    # The first playable scene is a generated turn like any other, so it honours
+    # the same switch instead of silently falling back to the classic guidance.
+    narration_mode: Optional[Literal["classic", "experimental"]] = None
 
 
 class CharacterStateChange(BaseModel):
@@ -207,6 +217,9 @@ class CheckpointBoundaryModel(BaseModel):
 class CheckpointModel(BaseModel):
     checkpoint_id: str
     description: str = ""
+    playable_situation: str = ""
+    possible_developments: List[str] = []
+    entry_location: Optional[str] = None
     required_conditions: List[Dict] = []
     cards_unlocked: List[str] = []
     boundary: CheckpointBoundaryModel = CheckpointBoundaryModel()
@@ -267,6 +280,9 @@ class BranchRequest(BaseModel):
 class RegenerateRequest(BaseModel):
     request_id: Optional[str] = None
     expected_revision: Optional[int] = None
+    # A reroll is a new generation of the latest turn, so it follows the switch
+    # too. It never rewrites an earlier chapter.
+    narration_mode: Optional[Literal["classic", "experimental"]] = None
 
 
 class ForeshadowingsUpdateReq(BaseModel):

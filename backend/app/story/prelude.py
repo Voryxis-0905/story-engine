@@ -5,6 +5,7 @@ from app.llm_client import mock_prelude_response
 from app.llm_client import parse_llm_json
 from app.prompts import PRELUDE_VALIDATOR_PROMPT
 from app.prompts import PRELUDE_WRITER_PROMPT
+from app.story.checkpoint_context import playable_checkpoint_description
 import json
 
 
@@ -12,7 +13,7 @@ def build_opening_instruction(checkpoint: dict) -> str:
     return (
         f"[This is the first playable scene, before the player has acted. "
         f"The checkpoint describes an event that may unfold later, not a completed outcome: "
-        f"\"{checkpoint.get('description', '')}\". Introduce the immediate setting and relevant people, "
+        f"\"{playable_checkpoint_description(checkpoint)}\". Introduce the immediate setting and relevant people, "
         f"then stop immediately before the first consequential action or irreversible result. "
         f"Leave the player a concrete opportunity to intervene; do not decide their reaction, "
         f"finish the event, or force its default outcome. "
@@ -60,6 +61,11 @@ def _generate_prelude(world_name: str) -> dict:
         first_checkpoint = checkpoints[0] if checkpoints else None
     protagonist_id = world_config.get("protagonist_id", "")
     protagonist = character_state.get("characters", {}).get(protagonist_id, {}) if protagonist_id else {}
+    # New-world ideas may describe an entire future arc. The prelude only
+    # needs the opening situation and tone; the raw pitch can spoil later beats.
+    structured_opening = bool(first_checkpoint and isinstance(
+        first_checkpoint.get("playable_situation"), str
+    ) and first_checkpoint["playable_situation"].strip())
 
     context_payload = {
         "world_context": {
@@ -69,7 +75,9 @@ def _generate_prelude(world_name: str) -> dict:
             "tone": world_config.get("tone", ""),
             "story_thesis": world_config.get("story_thesis", ""),
             "fixed_rules": world_config.get("fixed_rules", []),
-            "narrative_scope_note": world_config.get("narrative_scope_note", ""),
+            "narrative_scope_note": (
+                "" if structured_opening else world_config.get("narrative_scope_note", "")
+            ),
             "calendar": world_config.get("calendar"),
             "story_clock": world_config.get("story_clock"),
             "protagonist": {
@@ -83,7 +91,7 @@ def _generate_prelude(world_name: str) -> dict:
         },
         "first_checkpoint": {
             "checkpoint_id": first_checkpoint["checkpoint_id"] if first_checkpoint else "cp_0",
-            "description": first_checkpoint["description"] if first_checkpoint else "",
+            "description": playable_checkpoint_description(first_checkpoint) if first_checkpoint else "",
             "allowed_locations": first_checkpoint["boundary"]["locations"] if first_checkpoint and "boundary" in first_checkpoint else [],
             "allowed_characters": first_checkpoint["boundary"]["allowed_characters"] if first_checkpoint and "boundary" in first_checkpoint else [],
             "time_window": first_checkpoint["boundary"]["time_window"] if first_checkpoint and "boundary" in first_checkpoint else ""

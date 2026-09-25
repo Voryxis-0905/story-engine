@@ -2,6 +2,7 @@
 from app.rag import select_relevant_lore_cards
 from app.state_manager import _apply_outcome_payload
 from app.state_manager import eval_condition
+from app.story.checkpoint_context import playable_checkpoint_description
 from app.world.boundaries import BOUNDARY_HARD_REJECT_TEMPLATES
 from app.world.boundaries import _is_location_in_zone
 from app.world.boundaries import build_boundary_correction_note
@@ -44,7 +45,23 @@ def get_active_cards(cards: list, checkpoint: dict, context_text: str = "",
     return [c for c in qualifying if c["type"] != "lore" or c["id"] in selected_lore_ids]
 
 
+def checkpoint_entry_location_met(checkpoint: dict, character_state: dict,
+                                  world_config: dict = None) -> bool:
+    entry_location = checkpoint.get("entry_location")
+    if isinstance(entry_location, str) and entry_location.strip():
+        protagonist_id = (world_config or {}).get("protagonist_id", "")
+        protagonist = character_state.get(protagonist_id, {})
+        current_location = protagonist.get("location", "") if isinstance(protagonist, dict) else ""
+        if not isinstance(current_location, str) or not _is_location_in_zone(
+            current_location, {entry_location.strip()}
+        ):
+            return False
+    return True
+
+
 def checkpoint_conditions_met(checkpoint: dict, character_state: dict, world_config: dict = None) -> bool:
+    if not checkpoint_entry_location_met(checkpoint, character_state, world_config):
+        return False
     conditions = checkpoint.get("required_conditions", [])
     if not conditions:
         return True
@@ -187,6 +204,7 @@ def advance_checkpoint_if_ready(canon_timeline: dict, world_config: dict,
     ) if sub_beats else True
 
     next_id_to_advance = None
+    selected_outcome_payload = None
 
     if (not sub_beats and chapter_closed) or (sub_beats and all_sub_beats_done):
         for outcome in current_checkpoint.get("alternate_outcomes", []):
@@ -194,10 +212,12 @@ def advance_checkpoint_if_ready(canon_timeline: dict, world_config: dict,
                 continue
             conditions = outcome.get("conditions", [])
             if not conditions or all(eval_condition(c, character_state, world_config) for c in conditions):
-                next_id_to_advance = outcome.get("next_checkpoint_id") or outcome.get("to_checkpoint_id")
-                outcome_payload = outcome.get("apply") or outcome.get("state_changes", {})
-                if outcome_payload:
-                    _apply_outcome_payload(character_state, outcome_payload, world_config)
+                target_id = outcome.get("next_checkpoint_id") or outcome.get("to_checkpoint_id")
+                target = find_checkpoint(checkpoints, target_id) if target_id else None
+                if not target or not checkpoint_entry_location_met(target, character_state, world_config):
+                    continue
+                next_id_to_advance = target_id
+                selected_outcome_payload = outcome.get("apply") or outcome.get("state_changes", {})
                 break
 
         if not next_id_to_advance:
@@ -230,6 +250,9 @@ def advance_checkpoint_if_ready(canon_timeline: dict, world_config: dict,
     next_checkpoint = find_checkpoint(checkpoints, next_id_to_advance)
     if not next_checkpoint:
         return result
+
+    if selected_outcome_payload:
+        _apply_outcome_payload(character_state, selected_outcome_payload, world_config)
 
     completed = world_config.setdefault("completed_checkpoints", [])
     if current_id not in completed:
@@ -274,7 +297,7 @@ def advance_checkpoint_if_ready(canon_timeline: dict, world_config: dict,
 
     result.update({
         "to_checkpoint_id": next_checkpoint["checkpoint_id"],
-        "to_checkpoint_description": next_checkpoint.get("description", ""),
+        "to_checkpoint_description": playable_checkpoint_description(next_checkpoint),
         "cards_unlocked": unlocked_card_names,
         "realm_changes": realm_changes,
         "applied_effects": applied_effects

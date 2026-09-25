@@ -47,6 +47,7 @@ def chapter_continue(world_name: str, req: ChapterContinueRequest):
         narrator_input=req.user_input,
         request_id=req.request_id,
         expected_revision=req.expected_revision,
+        narration_mode=req.narration_mode,
     )
 
 
@@ -71,6 +72,10 @@ def time_skip_preview(world_name: str, req: TimeSkipRequest):
 @router.post("/worlds/{world_name}/time-skip/execute")
 def time_skip_execute(world_name: str, req: TimeSkipRequest):
     from app.world.time_skip import display_time_skip
+    # `narration_mode` picks the prose profile only. It is kept out of the
+    # engine-facing request dict so the time-skip action hash (which decides
+    # whether a retry replays a committed turn) is unchanged by this feature.
+    skip_request = req.model_dump(exclude={"narration_mode"})
     preview = _time_skip_preview(world_name, req)
     if preview.get("blocked"):
         raise HTTPException(status_code=409, detail={
@@ -80,11 +85,12 @@ def time_skip_execute(world_name: str, req: TimeSkipRequest):
         })
     return _generate_chapter(
         world_name,
-        narrator_input=display_time_skip(req.model_dump(), preview),
-        display_input=display_time_skip(req.model_dump(), preview),
+        narrator_input=display_time_skip(skip_request, preview),
+        display_input=display_time_skip(skip_request, preview),
         request_id=req.request_id,
         expected_revision=req.expected_revision,
-        time_skip_request=req.model_dump(),
+        time_skip_request=skip_request,
+        narration_mode=req.narration_mode,
     )
 
 
@@ -166,7 +172,8 @@ def chapter_start(world_name: str, req: ChapterStartRequest):
         )
     synthetic_instruction = build_opening_instruction(checkpoint)
     return _generate_chapter(world_name, narrator_input=synthetic_instruction,
-                             display_input="", opening_setup=True)
+                             display_input="", opening_setup=True,
+                             narration_mode=req.narration_mode)
 
 
 @router.post("/worlds/{world_name}/chapter/generate-prelude")
@@ -211,45 +218,13 @@ def chapter_confirm_prelude(world_name: str):
         raise HTTPException(status_code=400, detail="No prelude exists to confirm. Generate one first.")
     world_config = read_world_file(world_path, "world_config.json")
     
-    # Idempotent Guard: if already confirmed, do not advance checkpoint again
+    # Confirming a prologue is not the same as playing the first checkpoint.
+    # cp_0 describes Chapter 1's playable opening; consuming it here hands the
+    # narrator cp_1's future events before the player has made those choices.
     if world_config.get("prelude_confirmed"):
         return {"status": "prelude_confirmed"}
 
     world_config["prelude_confirmed"] = True
-
-    prelude_enabled = world_config.get("prelude_enabled", False)
-    if prelude_enabled:
-        canon_timeline = read_world_file(world_path, "canon_timeline.json")
-        checkpoints = canon_timeline.get("checkpoints", [])
-        first_cp_id = checkpoints[0]["checkpoint_id"] if checkpoints else "cp_0"
-        current_id = world_config.get("current_checkpoint_id", "")
-        
-        # Strict Anchor: Only transition checkpoint if currently at the initial prelude checkpoint (cp_0)
-        if current_id == first_cp_id:
-            current_cp = find_checkpoint(checkpoints, current_id)
-            if current_cp:
-                next_id = current_cp.get("default_next_checkpoint_id")
-                if not next_id and len(checkpoints) > 1:
-                    next_id = checkpoints[1]["checkpoint_id"]
-                if next_id:
-                    completed = world_config.setdefault("completed_checkpoints", [])
-                    if current_id and current_id not in completed:
-                        completed.append(current_id)
-                    world_config["current_checkpoint_id"] = next_id
-
-                    # Unlock cards for the new checkpoint
-                    card_registry = read_world_file(world_path, "card_registry.json")
-                    next_cp = find_checkpoint(checkpoints, next_id)
-                    if card_registry and isinstance(card_registry.get("cards"), list):
-                        card_updated = False
-                        for card in card_registry["cards"]:
-                            if next_cp and (card.get("id") in next_cp.get("cards_unlocked", []) or card.get("unlock_checkpoint_id") == next_id):
-                                if card.get("status") != "unlocked":
-                                    card["status"] = "unlocked"
-                                    card_updated = True
-                        if card_updated:
-                            write_world_file(world_path, "card_registry.json", card_registry)
-
     write_world_file(world_path, "world_config.json", world_config)
     bump_world_revision(world_path)
     return {"status": "prelude_confirmed"}
@@ -281,6 +256,7 @@ def chapter_regenerate(world_name: str, req: RegenerateRequest = None):
         request_id=request_id,
         expected_revision=expected_revision,
         regenerate=True,
+        narration_mode=req.narration_mode if req else None,
     )
 
 

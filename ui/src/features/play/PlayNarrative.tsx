@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react';
 import type { TimeSkipRequest } from '../../api/client';
 import { ArrowPathIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, PaperAirplaneIcon, PlayIcon, SparklesIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
-type Props = Pick<PlaySession, 'playState' | 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'draft' | 'handleDismissDraft' | 'handleRetryDraft' | 'epilogue' | 'lifecycleStatus' | 'epilogueChoices' | 'handleLoadEndgameChoices' | 'handleChooseEnding' | 'chatEndRef' | 'handleSend' | 'timeSkipOpen' | 'setTimeSkipOpen' | 'timeSkipPreview' | 'timeSkipLoading' | 'handlePreviewTimeSkip' | 'handleExecuteTimeSkip' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
+type Props = Pick<PlaySession, 'playState' | 'turns' | 'input' | 'setInput' | 'loading' | 'error' | 'setError' | 'outputLength' | 'setOutputLength' | 'narrationMode' | 'setNarrationMode' | 'expandedTurns' | 'toggleTurnExpanded' | 'collapseAllPrevious' | 'expandAllTurns' | 'preludeText' | 'draft' | 'handleDismissDraft' | 'handleRetryDraft' | 'epilogue' | 'lifecycleStatus' | 'epilogueChoices' | 'handleLoadEndgameChoices' | 'handleChooseEnding' | 'chatEndRef' | 'handleSend' | 'timeSkipOpen' | 'setTimeSkipOpen' | 'timeSkipPreview' | 'timeSkipLoading' | 'handlePreviewTimeSkip' | 'handleExecuteTimeSkip' | 'handleStartChapter' | 'handleRegenerate' | 'handleGeneratePrelude' | 'handleConfirmPrelude'>;
 
-export function PlayNarrative({ playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, draft, handleDismissDraft, handleRetryDraft, epilogue, lifecycleStatus, epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
+export function PlayNarrative({ playState, turns, input, setInput, loading, error, setError, outputLength, setOutputLength, narrationMode, setNarrationMode, expandedTurns, toggleTurnExpanded, collapseAllPrevious, expandAllTurns, preludeText, draft, handleDismissDraft, handleRetryDraft, epilogue, lifecycleStatus, epilogueChoices, handleLoadEndgameChoices, handleChooseEnding, chatEndRef, handleSend, timeSkipOpen, setTimeSkipOpen, timeSkipPreview, timeSkipLoading, handlePreviewTimeSkip, handleExecuteTimeSkip, handleStartChapter, handleRegenerate, handleGeneratePrelude, handleConfirmPrelude }: Props) {
   const [skip, setSkip] = useState<TimeSkipRequest>({ amount: 1, unit: 'hours', activity: '', interruption_policy: 'important_events', narration_detail: 'standard', force: false });
   const [previewedSkip, setPreviewedSkip] = useState('');
   useEffect(() => { if (!timeSkipOpen) { setSkip(s => ({ ...s, force: false })); setPreviewedSkip(''); } }, [timeSkipOpen]);
@@ -22,7 +22,7 @@ export function PlayNarrative({ playState, turns, input, setInput, loading, erro
       <main className="flex-1 min-w-0 flex flex-col h-full bg-[var(--bg-surface)] relative">
         {/* Top Control Bar */}
         <div className="px-6 py-3 border-b border-[var(--line-2)] flex items-center justify-between gap-3 glass-panel shadow-sm z-10">
-          <div className="flex items-center gap-4 text-xs font-mono font-bold text-[var(--ink-soft)] min-w-0">
+          <div className="flex items-center gap-4 text-xs font-mono font-bold text-[var(--ink-soft)] min-w-0 flex-wrap">
             {/* Pacing control commented out: AI story engine handles pacing dynamically based on plot beat */}
             {/*
             <div className="flex items-center gap-1.5">
@@ -51,6 +51,34 @@ export function PlayNarrative({ playState, turns, input, setInput, loading, erro
                 <option value="long">Long</option>
               </select>
             </div>
+
+            {/* Experimental pacing. Off by default, remembered per world, and
+                it only applies to turns written from now on - saved turns are
+                never rewritten. The copy has to say both "experimental" and
+                "still saved": the one thing this switch must not imply is that
+                the turn it produces is a throwaway draft. The row wraps, so the
+                longer label never pushes the Start Chapter button off a narrow
+                screen. */}
+            <label
+              className="flex items-center gap-1.5 cursor-pointer select-none"
+              title="Experimental pacing changes how a turn is planned and written: no forced obstacle or cliffhanger, and length follows the scene. The turn is generated and saved exactly as normal, and turns already saved are not rewritten."
+            >
+              <input
+                type="checkbox"
+                checked={narrationMode === 'experimental'}
+                onChange={(e) => setNarrationMode(e.target.checked ? 'experimental' : 'classic')}
+                aria-label="Experimental pacing"
+                className="w-3.5 h-3.5 cursor-pointer accent-[var(--periwinkle-dark)]"
+              />
+              <span className={narrationMode === 'experimental' ? 'text-[var(--periwinkle-dark)]' : undefined}>
+                Experimental pacing
+              </span>
+            </label>
+            {narrationMode === 'experimental' && (
+              <span className="text-[10px] font-medium text-[var(--ink-faint)] whitespace-nowrap">
+                turns still save normally
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">

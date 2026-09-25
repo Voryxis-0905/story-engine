@@ -82,6 +82,10 @@ def update_canon_timeline(world_name: str, req: CanonTimelineUpdate):
     if len(ids) != len(set(ids)):
         raise HTTPException(status_code=400, detail="checkpoint_id is duplicated, each checkpoint must have a unique id")
     write_world_file(world_path, "canon_timeline.json", {"checkpoints": checkpoints})
+    if any(cp.get("playable_situation", "").strip() for cp in checkpoints):
+        world_config = read_world_file(world_path, "world_config.json")
+        world_config["checkpoint_context_version"] = 2
+        write_world_file(world_path, "world_config.json", world_config)
     bump_world_revision(world_path)
     mark_builder_manual(world_path, "skeleton")
     return {"message": "canon_timeline updated", "checkpoints": len(checkpoints)}

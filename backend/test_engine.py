@@ -2463,6 +2463,8 @@ try:
     check(cfg_skel["display_name"] == "Magic Realm", "36a. skeleton phase updates display_name")
     check("story_clock" in cfg_skel and "foreshadowing_tracker" in cfg_skel and "linter_notification_enabled" in cfg_skel, "36a. skeleton phase preserves standard world_config template keys")
     check(cfg_skel["current_checkpoint_id"] == "cp_0", "36b. skeleton phase contract sets current_checkpoint_id to cp_0")
+    check(cfg_skel["checkpoint_context_version"] == 2,
+          "36b. new skeleton cannot fall back to tick-driven canon events when model omits a field")
 
     timeline_skel = main.read_world_file(wp_m3, "canon_timeline.json")
     check(len(timeline_skel["checkpoints"]) > 0, "36b. skeleton phase writes canon_timeline.json atomically")
@@ -3745,21 +3747,20 @@ r = client.post(f"/worlds/{WP_PRELUDE}/chapter/confirm-prelude")
 check(r.status_code == 200, "T4. confirm-prelude OK")
 check(r.json()["status"] == "prelude_confirmed", "T4. confirm response has status == prelude_confirmed")
 
-# Step 6b: Verify checkpoint auto-advanced from cp_0 to cp_1
+# Step 6b: The prelude is not gameplay; cp_0 must remain available for Chapter 1.
 r = client.get(f"/worlds/{WP_PRELUDE}")
 cfg_after = r.json()["world_config"]
-check(cfg_after["current_checkpoint_id"] != "cp_0",
-      f"T4. current_checkpoint_id advanced from cp_0 (got {cfg_after['current_checkpoint_id']})")
-check("cp_0" in cfg_after.get("completed_checkpoints", []),
-      "T4. cp_0 added to completed_checkpoints")
-check(cfg_after["current_checkpoint_id"] == "cp_1",
-      f"T4. current_checkpoint_id should be cp_1 (got {cfg_after['current_checkpoint_id']})")
+check(cfg_after["current_checkpoint_id"] == "cp_0",
+      f"T4. first playable checkpoint remains cp_0 (got {cfg_after['current_checkpoint_id']})")
+check("cp_0" not in cfg_after.get("completed_checkpoints", []),
+      "T4. prelude did not falsely complete cp_0")
 
 # Step 7: chapter/start now succeeds
 r = client.post(f"/worlds/{WP_PRELUDE}/chapter/start", json={"opening_mode": "ai_generate"})
 check(r.status_code == 200, "T4. chapter/start OK after prelude confirmed")
 ch1 = r.json()["chapter"]
 check(ch1["chapter_index"] == 1, "T4. chapter 1 has chapter_index == 1")
+check(ch1["checkpoint_id"] == "cp_0", "T4. Chapter 1 opens in the first playable checkpoint")
 
 # Step 8: Duplicate prelude generation blocked
 r = client.post(f"/worlds/{WP_PRELUDE}/chapter/generate-prelude")
@@ -4168,4 +4169,3 @@ shutil.rmtree(wp2, ignore_errors=True)
 shutil.rmtree(wp3, ignore_errors=True)
 
 print("\n=== TẤT CẢ TEST PASS ===")
-

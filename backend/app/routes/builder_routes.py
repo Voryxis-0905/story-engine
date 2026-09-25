@@ -91,6 +91,22 @@ def world_builder_interview_respond(req: InterviewRespondRequest):
     return res
 
 
+def _normalize_checkpoint_branches(checkpoint: dict) -> None:
+    """Keep prose possibilities without treating them as executable branches."""
+    alternatives = checkpoint.get("alternate_outcomes", [])
+    if not isinstance(alternatives, list):
+        checkpoint["alternate_outcomes"] = []
+        return
+    prose = [item.strip() for item in alternatives
+             if isinstance(item, str) and item.strip()]
+    developments = checkpoint.get("possible_developments", [])
+    if not isinstance(developments, list):
+        developments = []
+    checkpoint["possible_developments"] = developments + prose
+    checkpoint["alternate_outcomes"] = [item for item in alternatives
+                                        if isinstance(item, dict)]
+
+
 def _default_world_events(world_path: str, cfg: dict, character_state: dict) -> int:
     """Create valid background events for a freshly built world (idempotent).
 
@@ -112,6 +128,11 @@ def _default_world_events(world_path: str, cfg: dict, character_state: dict) -> 
         "",
     )
     events = []
+    # Structured checkpoints describe opportunities and conditional branches,
+    # not outcomes that become canon merely because a clock tick passed. A
+    # creator can still add explicit world events with actual triggers/effects.
+    if cfg.get("checkpoint_context_version") == 2:
+        return 0
     for index, cp in enumerate(checkpoints):
         cp_id = cp.get("checkpoint_id") or f"cp_{index}"
         boundary_locations = (cp.get("boundary") or {}).get("locations", [])
@@ -366,6 +387,12 @@ def world_builder_step(world_name: str):
 
             raw_checkpoints = [cp for cp in raw_checkpoints if isinstance(cp, dict)]
 
+            for cp in raw_checkpoints:
+                # The model sometimes puts prose branch ideas in the engine's
+                # executable alternate_outcomes slot. Preserve the ideas, but
+                # never persist malformed branches that Creator cannot edit.
+                _normalize_checkpoint_branches(cp)
+
             if not raw_checkpoints:
                 raw_checkpoints = [make_checkpoint("cp_0", "Initial world state.")]
 
@@ -377,6 +404,10 @@ def world_builder_step(world_name: str):
                         if cp.get("default_next_checkpoint_id") == old_id:
                             cp["default_next_checkpoint_id"] = "cp_0"
 
+            # This builder uses the v2 prompt. A missing field in one model
+            # response must not silently revive the legacy tick-driven canon
+            # event generator; old worlds keep their absent/legacy version.
+            new_cfg["checkpoint_context_version"] = 2
             new_cfg["current_checkpoint_id"] = "cp_0"
 
             timeline = {"checkpoints": raw_checkpoints}

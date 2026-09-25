@@ -7,6 +7,8 @@ from .world_builder import WORLD_BUILDER_CHARACTERS_PROMPT
 from .world_builder import LOCATION_MAP_GENERATOR_PROMPT
 from .narration import PLANNER_SYSTEM_PROMPT
 from .narration import WRITER_SYSTEM_PROMPT
+from .narration import EXPERIMENTAL_PLANNER_SYSTEM_PROMPT
+from .narration import EXPERIMENTAL_WRITER_SYSTEM_PROMPT
 from .narration import EXTRACTOR_SYSTEM_PROMPT
 from .editing import CREATOR_ASSISTANT_PROMPT
 from .editing import CONSISTENCY_CHECKER_SYSTEM_PROMPT

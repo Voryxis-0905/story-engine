@@ -9,6 +9,7 @@ from app.checkpoint_engine import find_checkpoint
 from app.checkpoint_engine import get_active_cards
 from app.checkpoint_engine import raise_boundary_hard_reject
 from app.checkpoint_engine import tick_endgame
+from app.story.checkpoint_context import playable_checkpoint_description
 from app.persistence import commit_world_files
 from app.persistence import locked_world
 from app.psychology import apply_psychology_changes
@@ -78,7 +79,7 @@ logger = logging.getLogger(__name__)
 def _generate_chapter(world_name: str, narrator_input: str, display_input: str = None,
                       request_id: str = None, expected_revision: int = None,
                       regenerate: bool = False, time_skip_request: dict = None,
-                      opening_setup: bool = False) -> dict:
+                      opening_setup: bool = False, narration_mode: str = None) -> dict:
     from app.storage import (
         world_path_of, read_world_file, write_world_file,
         has_real_api_key, get_world_style_card,
@@ -126,6 +127,12 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "display_input": display_input,
         "time_skip": time_skip_request,
     })
+    # The narration mode is deliberately NOT part of the action hash. A receipt
+    # is only written once a turn has committed, so folding the mode in would
+    # make a legitimate replay miss: a client that flips the switch and retries
+    # the same action (after a lost response, say) would be treated as a new
+    # action and commit a second turn on top of the first. Replay identity must
+    # stay "the same action", independent of how it was narrated.
     replay = lookup_receipt(world_path, request_id, action_hash)
     if replay is not None:
         return replay
@@ -433,7 +440,12 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         "opening_setup": opening_setup,
         "current_checkpoint": {
             "checkpoint_id": checkpoint["checkpoint_id"],
-            "description": checkpoint["description"],
+            # A new-world checkpoint can carry a creator-facing outline, but
+            # only its immediate playable situation belongs in a turn prompt.
+            "description": playable_checkpoint_description(checkpoint),
+            **({"context_kind": "playable_situation"}
+               if isinstance(checkpoint.get("playable_situation"), str)
+               and checkpoint["playable_situation"].strip() else {}),
             "allowed_locations": checkpoint["boundary"]["locations"],
             "allowed_characters": checkpoint["boundary"]["allowed_characters"],
             "time_window": checkpoint["boundary"]["time_window"]
@@ -448,7 +460,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
     }
 
     _editor_enabled = _get_effective_editor_enabled(world_name)
-    planner_out = call_planner_stage(base_payload, narrator_input, world_name=world_name)
+    planner_out = call_planner_stage(base_payload, narrator_input, world_name=world_name,
+                                     narration_mode=narration_mode)
     scene_outline = planner_out["scene_outline"]
     facts_this_turn = planner_out["facts_this_turn"]
     state_changes = planner_out["state_changes"]
@@ -472,7 +485,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
         base_payload, scene_outline, facts_this_turn, state_changes,
         suggested_actions, anchor_keywords, open_threads_update,
         is_ooc, action_translation, effective_user_input,
-        world_name=world_name, editor_enabled=_editor_enabled
+        world_name=world_name, editor_enabled=_editor_enabled,
+        narration_mode=narration_mode
     )
 
     boundary_correction = None
@@ -495,7 +509,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             retry_payload, scene_outline, facts_this_turn, state_changes,
             suggested_actions, anchor_keywords, open_threads_update,
             is_ooc, action_translation, effective_user_input,
-            world_name=world_name, editor_enabled=_editor_enabled
+            world_name=world_name, editor_enabled=_editor_enabled,
+            narration_mode=narration_mode
         )
 
         violations_after_retry = [] if boundary_advisory else check_boundary_violations(state_changes, checkpoint)
@@ -538,7 +553,8 @@ def _generate_chapter(world_name: str, narrator_input: str, display_input: str =
             retry_payload, scene_outline, facts_this_turn, state_changes,
             suggested_actions, anchor_keywords, open_threads_update,
             is_ooc, action_translation, effective_user_input,
-            world_name=world_name, editor_enabled=_editor_enabled
+            world_name=world_name, editor_enabled=_editor_enabled,
+            narration_mode=narration_mode
         )
         consistency_rewritten = True
 

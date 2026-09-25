@@ -13,6 +13,8 @@ function props(turns: any[]) {
     setError: () => {},
     outputLength: 'medium',
     setOutputLength: () => {},
+    narrationMode: 'classic',
+    setNarrationMode: () => {},
     expandedTurns: { 0: true },
     toggleTurnExpanded: () => {},
     collapseAllPrevious: () => {},
@@ -103,5 +105,29 @@ describe('PlayNarrative story rendering', () => {
     expect(handleSend).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('Dismiss'));
     expect(handleDismissDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it('labels the pacing switch as experimental and says the turn still saves', () => {
+    const setNarrationMode = vi.fn();
+    const { rerender } = render(
+      <PlayNarrative {...props([])} narrationMode="classic" setNarrationMode={setNarrationMode} />,
+    );
+
+    const toggle = screen.getByRole('checkbox', { name: 'Experimental pacing' });
+    expect(toggle).not.toBeChecked();
+    expect(screen.getByText(/Experimental pacing/)).toBeInTheDocument();
+    // Off by default, so the reassurance is not shown until it is relevant.
+    expect(screen.queryByText(/still save normally/)).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(setNarrationMode).toHaveBeenCalledWith('experimental');
+
+    rerender(<PlayNarrative {...props([])} narrationMode="experimental" setNarrationMode={setNarrationMode} />);
+    expect(screen.getByRole('checkbox', { name: 'Experimental pacing' })).toBeChecked();
+    // The switch must never read as "this turn will not be saved".
+    expect(screen.getByText(/still save normally/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Experimental pacing' }));
+    expect(setNarrationMode).toHaveBeenLastCalledWith('classic');
   });
 });
